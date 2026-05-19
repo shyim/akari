@@ -1,0 +1,247 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forwarder:
+    runs-on: ubuntu-latest
+    name: Go forwarder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: forwarder/go.mod
+          cache-dependency-path: forwarder/go.sum
+
+      - name: Run Go tests
+        working-directory: forwarder
+        run: go test ./...
+
+  linux:
+    runs-on: ubuntu-latest
+    name: "PHP ${{ matrix.php }} / Ubuntu"
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.2", "8.3", "8.4", "8.5"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libcurl4-openssl-dev
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "${{ matrix.php }}"
+          coverage: none
+          extensions: curl, pdo, sqlite3, session, mbstring
+
+      - name: Build extension
+        run: |
+          phpize
+          ./configure --enable-akari
+          make -j$(nproc)
+
+      - name: Verify extension loads
+        run: |
+          php -d extension=$PWD/modules/akari.so \
+            -d akari.enable=1 \
+            -r '
+              echo "akari version: " . phpversion("akari") . "\n";
+              $fns = ["enable","createSpan","setTransactionName","addTag",
+                      "getTags","logException","generateDistributedTracingHeaders",
+                      "isProfiling","getSpansJson"];
+              foreach ($fns as $f) {
+                echo "  " . (function_exists("Akari\\$f") ? "✓" : "✗") . " $f\n";
+              }
+            '
+
+      - name: Run tests
+        run: |
+          TEST_PHP_EXECUTABLE=$(which php) make test NO_INTERACTION=1
+
+      - name: Show failures
+        if: failure()
+        run: |
+          echo "=== Failed test output ==="
+          for f in tests/*.out; do
+            [ -f "$f" ] && echo "--- $(basename $f) ---" && cat "$f"
+          done
+          echo ""
+          echo "=== Diffs ==="
+          for f in tests/*.diff; do
+            [ -f "$f" ] && echo "--- $(basename $f) ---" && cat "$f"
+          done
+          echo ""
+          echo "=== Test result summary ==="
+          cat tests/*.log 2>/dev/null | grep -E 'FAIL|PASS' | head -20
+
+  macos:
+    runs-on: macos-latest
+    name: "PHP 8.5 / macOS"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: brew install curl
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          coverage: none
+          extensions: curl, pdo, sqlite3, session, mbstring
+
+      - name: Build extension
+        run: |
+          export CPPFLAGS="-I$(brew --prefix curl)/include"
+          export LDFLAGS="-L$(brew --prefix curl)/lib"
+          phpize
+          ./configure --enable-akari
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Run tests
+        run: |
+          TEST_PHP_EXECUTABLE=$(which php) make test NO_INTERACTION=1
+
+      - name: Show failures
+        if: failure()
+        run: |
+          echo "=== Failed test output ==="
+          for f in tests/*.out; do
+            [ -f "$f" ] && echo "--- $(basename $f) ---" && cat "$f"
+          done
+          echo ""
+          echo "=== Diffs ==="
+          for f in tests/*.diff; do
+            [ -f "$f" ] && echo "--- $(basename $f) ---" && cat "$f"
+          done
+          echo ""
+          echo "=== Test result summary ==="
+          cat tests/*.log 2>/dev/null | grep -E 'FAIL|PASS' | head -20
+
+  integrations:
+    runs-on: ubuntu-latest
+    name: Optional integrations
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+
+      memcached:
+        image: memcached:1.6-alpine
+        ports:
+          - 11211:11211
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libcurl4-openssl-dev libmemcached-dev zlib1g-dev
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          coverage: none
+          extensions: curl, pdo, sqlite3, session, mbstring, redis, memcached, mysqli
+
+      - name: Wait for services
+        run: |
+          php -r '
+          function wait_port(string $name, int $port, int $timeout = 60): void {
+              $deadline = time() + $timeout;
+              do {
+                  $socket = @fsockopen("127.0.0.1", $port, $errno, $errstr, 0.5);
+                  if ($socket) {
+                      fclose($socket);
+                      echo "$name ready\n";
+                      return;
+                  }
+                  usleep(500000);
+              } while (time() < $deadline);
+              fwrite(STDERR, "$name did not become ready on port $port\n");
+              exit(1);
+          }
+
+          wait_port("redis", 6379);
+          wait_port("memcached", 11211);
+
+          mysqli_report(MYSQLI_REPORT_OFF);
+          $deadline = time() + 90;
+          do {
+              $mysqli = mysqli_init();
+              if (@mysqli_real_connect($mysqli, "127.0.0.1", "root", "", "", 3306)) {
+                  mysqli_close($mysqli);
+                  echo "mysql ready\n";
+                  exit(0);
+              }
+              usleep(500000);
+          } while (time() < $deadline);
+
+          fwrite(STDERR, "mysql did not become ready\n");
+          exit(1);
+          '
+
+      - name: Build extension
+        run: |
+          phpize
+          ./configure --enable-akari
+          make -j$(nproc)
+
+      - name: Run integration tests
+        run: |
+          TEST_PHP_EXECUTABLE=$(which php) make test NO_INTERACTION=1 TESTS='tests/150-redis-span.phpt tests/151-redis-nokey-command.phpt tests/152-redis-unknown-command-skipped.phpt tests/160-mysqli-query-span.phpt tests/161-mysqli-procedural-span.phpt tests/162-mysqli-transaction.phpt tests/170-memcached-span.phpt'
+
+      - name: Show failures
+        if: failure()
+        run: |
+          echo "=== Failed test output ==="
+          for f in tests/*.out; do
+            [ -f "$f" ] && echo "--- $(basename $f) ---" && cat "$f"
+          done
+          echo ""
+          echo "=== Diffs ==="
+          for f in tests/*.diff; do
+            [ -f "$f" ] && echo "--- $(basename $f) ---" && cat "$f"
+          done
+          echo ""
+          echo "=== Test result summary ==="
+          cat tests/*.log 2>/dev/null | grep -E 'FAIL|PASS' | head -20

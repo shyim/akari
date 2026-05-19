@@ -1,0 +1,41 @@
+FROM webdevops/php-apache:8.5
+
+# Install system deps
+RUN apt-get update && apt-get install -y \
+    libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone Symfony Demo
+WORKDIR /
+RUN rm -rf /app
+RUN git clone --depth 1 https://github.com/symfony/demo.git /app
+WORKDIR /app
+
+ENV APP_ENV=prod
+RUN composer install --optimize-autoloader --no-interaction
+RUN php bin/console asset-map:compile
+
+ENV WEB_DOCUMENT_ROOT=/app/public
+
+# Build and install akari extension
+WORKDIR /usr/src/akari
+COPY config.m4 ./
+COPY include/ ./include/
+COPY src/ ./src/
+
+RUN phpize \
+    && ./configure --enable-akari \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /usr/src/akari
+
+# Configure akari
+RUN { \
+    echo "extension=akari.so"; \
+    echo "akari.enable=1"; \
+    echo "akari.service_name=symfony-demo"; \
+    echo "akari.udp_host=forwarder"; \
+    echo "akari.udp_port=4319"; \
+    echo "akari.max_depth=32"; \
+    echo "akari.min_duration_ms=1"; \
+} >> /usr/local/etc/php/conf.d/docker-php-ext-akari.ini
