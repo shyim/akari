@@ -1,0 +1,12 @@
+FROM golang:1.26-bookworm AS builder
+
+WORKDIR /app
+COPY forwarder/go.mod forwarder/go.sum ./
+RUN go mod download
+
+COPY forwarder/ ./
+RUN CGO_ENABLED=0 go build -o /akari-forwarder ./cmd/akari-forwarder
+
+FROM debian:bookworm-slim
+COPY --from=builder /akari-forwarder /usr/local/bin/akari-forwarder
+ENTRYPOINT ["akari-forwarder"]

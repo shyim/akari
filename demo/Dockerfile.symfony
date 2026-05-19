@@ -1,0 +1,65 @@
+FROM php:8.4-apache
+
+# Install system deps
+RUN apt-get update && apt-get install -y \
+    libcurl4-openssl-dev \
+    libicu-dev \
+    libzip-dev \
+    libsqlite3-dev \
+    unzip \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PHP extensions needed by Symfony Demo
+RUN docker-php-ext-install intl zip pdo pdo_sqlite opcache
+
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Clone Symfony Demo
+WORKDIR /var/www
+RUN git clone --depth 1 https://github.com/symfony/demo.git symfony-demo
+
+WORKDIR /var/www/symfony-demo
+ENV APP_ENV=prod
+RUN composer install --optimize-autoloader --no-interaction
+RUN php bin/console asset-map:compile
+
+# Apache config
+RUN a2enmod rewrite
+RUN { \
+    echo '<VirtualHost *:80>'; \
+    echo '    DocumentRoot /var/www/symfony-demo/public'; \
+    echo '    <Directory /var/www/symfony-demo/public>'; \
+    echo '        AllowOverride All'; \
+    echo '        Require all granted'; \
+    echo '        FallbackResource /index.php'; \
+    echo '    </Directory>'; \
+    echo '</VirtualHost>'; \
+} > /etc/apache2/sites-available/000-default.conf
+
+# Ensure var/ is writable
+RUN mkdir -p var/cache var/log && chmod -R 777 var/
+
+# Build and install akari extension
+WORKDIR /usr/src/akari
+COPY config.m4 ./
+COPY include/ ./include/
+COPY src/ ./src/
+
+RUN phpize \
+    && ./configure --enable-akari \
+    && make -j$(nproc) \
+    && make install \
+    && docker-php-ext-enable akari \
+    && rm -rf /usr/src/akari
+
+# Configure akari
+RUN { \
+    echo "akari.enable=1"; \
+    echo "akari.service_name=symfony-demo"; \
+    echo "akari.udp_host=forwarder"; \
+    echo "akari.udp_port=4319"; \
+    echo "akari.max_depth=32"; \
+    echo "akari.min_duration_ms=1"; \
+} >> /usr/local/etc/php/conf.d/docker-php-ext-akari.ini

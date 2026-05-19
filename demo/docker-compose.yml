@@ -1,0 +1,36 @@
+services:
+  php:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.php
+    ports:
+      - "8083:80"
+    depends_on:
+      - forwarder
+
+  symfony:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.symfony
+    ports:
+      - "8082:80"
+    depends_on:
+      - forwarder
+
+  forwarder:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.forwarder
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - OTEL_FORWARDER_LISTEN=0.0.0.0:4319
+    ports:
+      - "4319:4319/udp"
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
