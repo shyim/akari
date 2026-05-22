@@ -27,6 +27,10 @@ extern profiler_state_t *g_state;
 
 void observer_register(void);
 
+/* ── Shutdown lifecycle (defined in profiler.c) ── */
+
+void profiler_rshutdown_finalize(void);
+
 /* ── Time helpers (defined in profiler_span.c) ── */
 
 uint64_t realtime_ns(void);

@@ -60,8 +60,9 @@ static void *event_dispatch_pre(profiler_state_t *state, zend_execute_data *exec
     }
 
     if (event_name) {
-        span->name_override_len = snprintf(span->name_override, SPAN_NAME_OVERRIDE_MAX,
+        int n = snprintf(span->name_override, SPAN_NAME_OVERRIDE_MAX,
             "event.dispatch %s", event_name);
+        span->name_override_len = (n > 0 && (size_t)n < SPAN_NAME_OVERRIDE_MAX) ? (size_t)n : SPAN_NAME_OVERRIDE_MAX - 1;
     }
 
     return NULL;

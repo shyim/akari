@@ -132,13 +132,16 @@ static void *redis_pre(profiler_state_t *state, zend_execute_data *execute_data,
     if (has_key && num_args >= 1) {
         zval *key_arg = ZEND_CALL_ARG(execute_data, 1);
         if (key_arg && Z_TYPE_P(key_arg) == IS_STRING) {
-            attr->db_statement_len = snprintf(attr->db_statement, DB_STATEMENT_MAX,
+            int n = snprintf(attr->db_statement, DB_STATEMENT_MAX,
                 "%s %s", method, Z_STRVAL_P(key_arg));
+            attr->db_statement_len = (n > 0 && (size_t)n < DB_STATEMENT_MAX) ? (size_t)n : DB_STATEMENT_MAX - 1;
         } else {
-            attr->db_statement_len = snprintf(attr->db_statement, DB_STATEMENT_MAX, "%s", method);
+            int n = snprintf(attr->db_statement, DB_STATEMENT_MAX, "%s", method);
+            attr->db_statement_len = (n > 0 && (size_t)n < DB_STATEMENT_MAX) ? (size_t)n : DB_STATEMENT_MAX - 1;
         }
     } else {
-        attr->db_statement_len = snprintf(attr->db_statement, DB_STATEMENT_MAX, "%s", method);
+        int n = snprintf(attr->db_statement, DB_STATEMENT_MAX, "%s", method);
+        attr->db_statement_len = (n > 0 && (size_t)n < DB_STATEMENT_MAX) ? (size_t)n : DB_STATEMENT_MAX - 1;
     }
 
     state->db_attr_count++;

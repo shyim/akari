@@ -73,8 +73,9 @@ static void *twig_render_pre(profiler_state_t *state, zend_execute_data *execute
     if (get_template_name(execute_data, tpl_name, sizeof(tpl_name))) {
         record_twig_attr(state, span_index, tpl_name, strlen(tpl_name));
         /* Override span name: "twig.render blog/index.html.twig" */
-        span->name_override_len = snprintf(span->name_override, SPAN_NAME_OVERRIDE_MAX,
+        int n = snprintf(span->name_override, SPAN_NAME_OVERRIDE_MAX,
             "twig.render %s", tpl_name);
+        span->name_override_len = (n > 0 && (size_t)n < SPAN_NAME_OVERRIDE_MAX) ? (size_t)n : SPAN_NAME_OVERRIDE_MAX - 1;
     } else {
         record_twig_attr(state, span_index, NULL, 0);
     }
@@ -121,11 +122,13 @@ static void *twig_block_pre(profiler_state_t *state, zend_execute_data *execute_
     /* Override span name: "twig.block header" or "twig.block template::header" */
     if (block_name) {
         if (tpl_name[0]) {
-            span->name_override_len = snprintf(span->name_override, SPAN_NAME_OVERRIDE_MAX,
+            int n = snprintf(span->name_override, SPAN_NAME_OVERRIDE_MAX,
                 "twig.block %s::%s", tpl_name, block_name);
+            span->name_override_len = (n > 0 && (size_t)n < SPAN_NAME_OVERRIDE_MAX) ? (size_t)n : SPAN_NAME_OVERRIDE_MAX - 1;
         } else {
-            span->name_override_len = snprintf(span->name_override, SPAN_NAME_OVERRIDE_MAX,
+            int n = snprintf(span->name_override, SPAN_NAME_OVERRIDE_MAX,
                 "twig.block %s", block_name);
+            span->name_override_len = (n > 0 && (size_t)n < SPAN_NAME_OVERRIDE_MAX) ? (size_t)n : SPAN_NAME_OVERRIDE_MAX - 1;
         }
     }
 

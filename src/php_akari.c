@@ -61,10 +61,12 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->trace_gc = 0;
 }
 
-/* Export: always UDP */
+/* Export: always UDP. Exports child spans AND finalized root span if present. */
 static void export_spans(profiler_state_t *state)
 {
-    if (!state || state->span_count == 0) return;
+    if (!state) return;
+    int has_root = (state->root.end_time_ns > 0 && !state->root.is_cli);
+    if (state->span_count == 0 && !has_root) return;
     const char *service_name = AKARI_G(service_name);
     if (!service_name) return;
     udp_export_spans(state, service_name);
@@ -169,12 +171,16 @@ ZEND_NAMED_FUNCTION(zf_akari_enable)
 ZEND_NAMED_FUNCTION(zf_akari_disable)
 {
     ZEND_PARSE_PARAMETERS_NONE();
-    profiler_rshutdown();
     profiler_state_t *state = profiler_get_state();
-    if (state && state->span_count > 0) {
-        export_spans(state);
-        state->span_count = 0;
-    }
+    /* Already disabled — skip duplicate finalize/export */
+    if (!state || !state->active) RETURN_TRUE;
+    /* Phase 1: Finalize root span before export */
+    profiler_rshutdown_finalize();
+    /* Phase 2: Export spans + root while attribute arrays still exist */
+    export_spans(state);
+    state->span_count = 0;
+    /* Phase 3: Full cleanup */
+    profiler_rshutdown();
     RETURN_TRUE;
 }
 
@@ -611,12 +617,18 @@ PHP_RINIT_FUNCTION(akari)
 PHP_RSHUTDOWN_FUNCTION(akari)
 {
     if (AKARI_G(enable)) {
-        profiler_rshutdown();
         profiler_state_t *state = profiler_get_state();
-        if (state && state->span_count > 0) {
-            export_spans(state);
-            state->span_count = 0;
-        }
+        /* If user called Akari\disable(), state is already inactive.
+         * Root was already finalized and exported — don't duplicate. */
+        if (!state || !state->active) return SUCCESS;
+        /* Phase 1: Finalize root span (sets end_time_ns, HTTP status, peak memory).
+         * Must happen BEFORE export so the root span is included in the trace. */
+        profiler_rshutdown_finalize();
+        /* Phase 2: Export all spans + root while attribute arrays still exist */
+        export_spans(state);
+        state->span_count = 0;
+        /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
+        profiler_rshutdown();
     }
     return SUCCESS;
 }
