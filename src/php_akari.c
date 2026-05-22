@@ -673,6 +673,9 @@ PHP_RSHUTDOWN_FUNCTION(akari)
         /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
         profiler_rshutdown();
     }
+    /* Always clear pending service name to prevent leaking across requests
+     * (e.g. in PHP-FPM workers where setServiceName() was called without enable()). */
+    AKARI_G(pending_service_name)[0] = '\0';
     return SUCCESS;
 }
 
