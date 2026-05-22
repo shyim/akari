@@ -48,16 +48,19 @@ static void *predis_pre(profiler_state_t *state, zend_execute_data *execute_data
 
                     if (call_user_function(NULL, cmd_arg, &get_arg_method, &arg_retval, 1, params) == SUCCESS) {
                         if (Z_TYPE(arg_retval) == IS_STRING && Z_STRLEN(arg_retval) > 0) {
-                            attr->db_statement_len = snprintf(attr->db_statement, DB_STATEMENT_MAX,
+                            int n = snprintf(attr->db_statement, DB_STATEMENT_MAX,
                                 "%s %s", Z_STRVAL(retval), Z_STRVAL(arg_retval));
+                            attr->db_statement_len = (n > 0 && (size_t)n < DB_STATEMENT_MAX) ? (size_t)n : DB_STATEMENT_MAX - 1;
                         } else {
-                            attr->db_statement_len = snprintf(attr->db_statement, DB_STATEMENT_MAX,
+                            int n = snprintf(attr->db_statement, DB_STATEMENT_MAX,
                                 "%s", Z_STRVAL(retval));
+                            attr->db_statement_len = (n > 0 && (size_t)n < DB_STATEMENT_MAX) ? (size_t)n : DB_STATEMENT_MAX - 1;
                         }
                         zval_ptr_dtor(&arg_retval);
                     } else {
-                        attr->db_statement_len = snprintf(attr->db_statement, DB_STATEMENT_MAX,
+                        int n = snprintf(attr->db_statement, DB_STATEMENT_MAX,
                             "%s", Z_STRVAL(retval));
+                        attr->db_statement_len = (n > 0 && (size_t)n < DB_STATEMENT_MAX) ? (size_t)n : DB_STATEMENT_MAX - 1;
                     }
                     zval_ptr_dtor(&get_arg_method);
                 }

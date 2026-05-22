@@ -74,11 +74,13 @@ static void symfony_kernel_post(profiler_state_t *state, zend_execute_data *exec
 
     /* Update root span name — prefer controller, fall back to route */
     if (state->root.http_controller[0]) {
-        state->root.name_len = snprintf(state->root.name, sizeof(state->root.name),
+        int n = snprintf(state->root.name, sizeof(state->root.name),
             "%s %s", state->root.http_method, state->root.http_controller);
+        state->root.name_len = (n > 0 && (size_t)n < sizeof(state->root.name)) ? (size_t)n : sizeof(state->root.name) - 1;
     } else if (state->root.http_route[0]) {
-        state->root.name_len = snprintf(state->root.name, sizeof(state->root.name),
+        int n = snprintf(state->root.name, sizeof(state->root.name),
             "%s %s", state->root.http_method, state->root.http_route);
+        state->root.name_len = (n > 0 && (size_t)n < sizeof(state->root.name)) ? (size_t)n : sizeof(state->root.name) - 1;
     }
 }
 
@@ -123,11 +125,13 @@ static void laravel_router_post(profiler_state_t *state, zend_execute_data *exec
 
     /* Update root span name — prefer controller, fall back to route */
     if (state->root.http_controller[0]) {
-        state->root.name_len = snprintf(state->root.name, sizeof(state->root.name),
+        int n = snprintf(state->root.name, sizeof(state->root.name),
             "%s %s", state->root.http_method, state->root.http_controller);
+        state->root.name_len = (n > 0 && (size_t)n < sizeof(state->root.name)) ? (size_t)n : sizeof(state->root.name) - 1;
     } else if (state->root.http_route[0]) {
-        state->root.name_len = snprintf(state->root.name, sizeof(state->root.name),
+        int n = snprintf(state->root.name, sizeof(state->root.name),
             "%s %s", state->root.http_method, state->root.http_route);
+        state->root.name_len = (n > 0 && (size_t)n < sizeof(state->root.name)) ? (size_t)n : sizeof(state->root.name) - 1;
     }
 }
 

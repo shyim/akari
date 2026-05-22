@@ -88,12 +88,15 @@ void init_root_span(profiler_state_t *state)
 
     /* Span name: "METHOD /path" */
     if (root->http_method[0] && root->url_path[0]) {
-        root->name_len = snprintf(root->name, sizeof(root->name), "%s %s",
-                                   root->http_method, root->url_path);
+        int n = snprintf(root->name, sizeof(root->name), "%s %s",
+                          root->http_method, root->url_path);
+        root->name_len = (n > 0 && (size_t)n < sizeof(root->name)) ? (size_t)n : sizeof(root->name) - 1;
     } else if (root->http_method[0]) {
-        root->name_len = snprintf(root->name, sizeof(root->name), "%s", root->http_method);
+        int n = snprintf(root->name, sizeof(root->name), "%s", root->http_method);
+        root->name_len = (n > 0 && (size_t)n < sizeof(root->name)) ? (size_t)n : sizeof(root->name) - 1;
     } else {
-        root->name_len = snprintf(root->name, sizeof(root->name), "HTTP");
+        memcpy(root->name, "HTTP", 4);
+        root->name_len = 4;
     }
 
     /* Try to read traceparent header */

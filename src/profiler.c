@@ -126,12 +126,21 @@ void profiler_rinit(int mode, uint32_t max_depth, int trace_internal,
     g_state->active = 1;
 }
 
+void profiler_rshutdown_finalize(void)
+{
+    if (!g_state || !g_state->active) return;
+    /* Finalize root span: sets end_time_ns, HTTP status, peak memory, error status.
+     * Must happen BEFORE export so the root span is included in the trace. */
+    finalize_root_span(g_state);
+}
+
 void profiler_rshutdown(void)
 {
     if (!g_state || !g_state->active) return;
     g_state->active = 0;
 
-    /* Finalize root span with end time + HTTP status */
+    /* Finalize root span with end time + HTTP status.
+     * Safe to call again if caller already finalized (returns early). */
     finalize_root_span(g_state);
 
     /* Clean up curl header tracking */

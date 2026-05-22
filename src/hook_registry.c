@@ -27,15 +27,16 @@ static zend_string *build_hook_key(const char *class_name, int class_len,
 {
     /* Key format: "T:class::method" or "T:function" where T is hook_type digit */
     char buf[512];
-    int len;
+    int n;
     if (class_len > 0) {
-        len = snprintf(buf, sizeof(buf), "%d:%.*s::%.*s",
+        n = snprintf(buf, sizeof(buf), "%d:%.*s::%.*s",
                        hook_type, class_len, class_name, method_len, method_name);
     } else {
-        len = snprintf(buf, sizeof(buf), "%d:%.*s",
+        n = snprintf(buf, sizeof(buf), "%d:%.*s",
                        hook_type, method_len, method_name);
     }
-    return zend_string_init(buf, len, 1); /* persistent */
+    int key_len = (n > 0 && n < (int)sizeof(buf)) ? n : (int)sizeof(buf) - 1;
+    return zend_string_init(buf, key_len, 1); /* persistent */
 }
 
 /* ── Registry API ── */
@@ -223,8 +224,9 @@ void hook_register_side_effect(hook_registry_t *reg,
 
     /* Add to side-effect hash */
     char buf[256];
-    int len = snprintf(buf, sizeof(buf), "%s", e->method_name);
-    zend_string *key = zend_string_init(buf, len, 1);
+    int n = snprintf(buf, sizeof(buf), "%s", e->method_name);
+    int key_len = (n > 0 && n < (int)sizeof(buf)) ? n : (int)sizeof(buf) - 1;
+    zend_string *key = zend_string_init(buf, key_len, 1);
     zend_hash_add_ptr(reg->side_map, key, e);
     zend_string_release(key);
 
