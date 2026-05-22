@@ -10,6 +10,7 @@
 ZEND_BEGIN_MODULE_GLOBALS(akari)
     zend_bool enable;
     char *service_name;
+    char pending_service_name[ROOT_ATTR_MAX];
     zend_long max_depth;
     zend_bool trace_internal;
     zend_bool trace_functions;
@@ -49,6 +50,7 @@ static PHP_GINIT_FUNCTION(akari)
 #endif
     akari_globals->enable = 0;
     akari_globals->service_name = NULL;
+    akari_globals->pending_service_name[0] = '\0';
     akari_globals->max_depth = 64;
     akari_globals->trace_internal = 0;
     akari_globals->trace_functions = 0;
@@ -61,11 +63,14 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->trace_gc = 0;
 }
 
-/* Resolve service name: override first, fall back to INI default */
+/* Resolve service name: request override → pending → INI default */
 static const char *get_service_name(profiler_state_t *state)
 {
     if (state && state->service_name_override[0]) {
         return state->service_name_override;
+    }
+    if (AKARI_G(pending_service_name)[0]) {
+        return AKARI_G(pending_service_name);
     }
     return AKARI_G(service_name);
 }
@@ -174,6 +179,16 @@ ZEND_NAMED_FUNCTION(zf_akari_enable)
         AKARI_G(sample_period),
         AKARI_G(min_duration_ms));
     profiler_set_flush_callback(flush_callback, NULL);
+
+    /* Copy any pre-enable pending service name into request state */
+    profiler_state_t *st = profiler_get_state();
+    if (st && AKARI_G(pending_service_name)[0]) {
+        size_t plen = strlen(AKARI_G(pending_service_name));
+        if (plen >= ROOT_ATTR_MAX) plen = ROOT_ATTR_MAX - 1;
+        memcpy(st->service_name_override, AKARI_G(pending_service_name), plen);
+        st->service_name_override[plen] = '\0';
+        AKARI_G(pending_service_name)[0] = '\0';
+    }
     RETURN_TRUE;
 }
 
@@ -280,16 +295,20 @@ ZEND_NAMED_FUNCTION(zf_akari_set_service_name)
         Z_PARAM_STR(name)
     ZEND_PARSE_PARAMETERS_END();
 
-    profiler_state_t *state = profiler_get_state();
-    if (!state) {
-        php_error_docref(NULL, E_WARNING, "Cannot set service name outside of an active request");
-        return;
-    }
-
     size_t len = ZSTR_LEN(name);
     if (len >= ROOT_ATTR_MAX) len = ROOT_ATTR_MAX - 1;
-    memcpy(state->service_name_override, ZSTR_VAL(name), len);
-    state->service_name_override[len] = '\0';
+
+    profiler_state_t *state = profiler_get_state();
+    if (state) {
+        /* Active request: store in request-local override */
+        memcpy(state->service_name_override, ZSTR_VAL(name), len);
+        state->service_name_override[len] = '\0';
+    } else {
+        /* Pre-enable: store in module-global pending slot.
+         * Will be picked up by profiler_rinit() when Akari\enable() is called. */
+        memcpy(AKARI_G(pending_service_name), ZSTR_VAL(name), len);
+        AKARI_G(pending_service_name)[len] = '\0';
+    }
 }
 
 /* ── Userland API: addTag ── */
@@ -624,6 +643,16 @@ PHP_RINIT_FUNCTION(akari)
             AKARI_G(sample_period),
             AKARI_G(min_duration_ms));
         profiler_set_flush_callback(flush_callback, NULL);
+
+        /* Copy any pre-enable pending service name into request state */
+        profiler_state_t *st = profiler_get_state();
+        if (st && AKARI_G(pending_service_name)[0]) {
+            size_t plen = strlen(AKARI_G(pending_service_name));
+            if (plen >= ROOT_ATTR_MAX) plen = ROOT_ATTR_MAX - 1;
+            memcpy(st->service_name_override, AKARI_G(pending_service_name), plen);
+            st->service_name_override[plen] = '\0';
+            AKARI_G(pending_service_name)[0] = '\0';
+        }
     }
     return SUCCESS;
 }
