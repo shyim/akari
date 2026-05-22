@@ -61,13 +61,22 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->trace_gc = 0;
 }
 
+/* Resolve service name: override first, fall back to INI default */
+static const char *get_service_name(profiler_state_t *state)
+{
+    if (state && state->service_name_override[0]) {
+        return state->service_name_override;
+    }
+    return AKARI_G(service_name);
+}
+
 /* Export: always UDP. Exports child spans AND finalized root span if present. */
 static void export_spans(profiler_state_t *state)
 {
     if (!state) return;
     int has_root = (state->root.end_time_ns > 0 && !state->root.is_cli);
     if (state->span_count == 0 && !has_root) return;
-    const char *service_name = AKARI_G(service_name);
+    const char *service_name = get_service_name(state);
     if (!service_name) return;
     udp_export_spans(state, service_name);
 }
@@ -205,7 +214,7 @@ ZEND_NAMED_FUNCTION(zf_akari_get_spans_json)
     if (!state || state->span_count == 0) {
         RETURN_FALSE;
     }
-    const char *service_name = AKARI_G(service_name);
+    const char *service_name = get_service_name(state);
     if (!service_name) service_name = "php";
 
     size_t json_len = 0;
@@ -271,11 +280,16 @@ ZEND_NAMED_FUNCTION(zf_akari_set_service_name)
         Z_PARAM_STR(name)
     ZEND_PARSE_PARAMETERS_END();
 
-    /* Update module global service name */
-    if (AKARI_G(service_name)) {
-        free(AKARI_G(service_name));
+    profiler_state_t *state = profiler_get_state();
+    if (!state) {
+        php_error_docref(NULL, E_WARNING, "Cannot set service name outside of an active request");
+        return;
     }
-    AKARI_G(service_name) = strndup(ZSTR_VAL(name), ZSTR_LEN(name));
+
+    size_t len = ZSTR_LEN(name);
+    if (len >= ROOT_ATTR_MAX) len = ROOT_ATTR_MAX - 1;
+    memcpy(state->service_name_override, ZSTR_VAL(name), len);
+    state->service_name_override[len] = '\0';
 }
 
 /* ── Userland API: addTag ── */

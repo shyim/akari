@@ -251,6 +251,9 @@ typedef struct profiler_state_s {
     char custom_transaction_name[ROOT_ATTR_MAX];
     int has_custom_transaction;
 
+    /* Userland API: service name override (set by setServiceName()) */
+    char service_name_override[ROOT_ATTR_MAX];
+
     /* Userland API: manual span tracking */
     int manual_spans[32];  /* span indices that are manually created */
     int manual_span_count;

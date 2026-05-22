@@ -161,6 +161,7 @@ void profiler_rshutdown(void)
     g_state->tag_count = 0;
     g_state->manual_span_count = 0;
     g_state->has_custom_transaction = 0;
+    g_state->service_name_override[0] = '\0';
 
     /* Final flush of remaining spans is done by the caller (php_profiler_otel.c) */
 }
