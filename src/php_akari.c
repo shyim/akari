@@ -299,7 +299,7 @@ ZEND_NAMED_FUNCTION(zf_akari_set_service_name)
     if (len >= ROOT_ATTR_MAX) len = ROOT_ATTR_MAX - 1;
 
     profiler_state_t *state = profiler_get_state();
-    if (state) {
+    if (state && state->active) {
         /* Active request: store in request-local override */
         memcpy(state->service_name_override, ZSTR_VAL(name), len);
         state->service_name_override[len] = '\0';
@@ -663,15 +663,16 @@ PHP_RSHUTDOWN_FUNCTION(akari)
         profiler_state_t *state = profiler_get_state();
         /* If user called Akari\disable(), state is already inactive.
          * Root was already finalized and exported — don't duplicate. */
-        if (!state || !state->active) return SUCCESS;
-        /* Phase 1: Finalize root span (sets end_time_ns, HTTP status, peak memory).
-         * Must happen BEFORE export so the root span is included in the trace. */
-        profiler_rshutdown_finalize();
-        /* Phase 2: Export all spans + root while attribute arrays still exist */
-        export_spans(state);
-        state->span_count = 0;
-        /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
-        profiler_rshutdown();
+        if (state && state->active) {
+            /* Phase 1: Finalize root span (sets end_time_ns, HTTP status, peak memory).
+             * Must happen BEFORE export so the root span is included in the trace. */
+            profiler_rshutdown_finalize();
+            /* Phase 2: Export all spans + root while attribute arrays still exist */
+            export_spans(state);
+            state->span_count = 0;
+            /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
+            profiler_rshutdown();
+        }
     }
     /* Always clear pending service name to prevent leaking across requests
      * (e.g. in PHP-FPM workers where setServiceName() was called without enable()). */

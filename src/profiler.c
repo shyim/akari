@@ -94,6 +94,7 @@ void profiler_rinit(int mode, uint32_t max_depth, int trace_internal,
     g_state->msg_attr_count = 0;
     g_state->exception_event_count = 0;
     g_state->stack_depth = 0;
+    g_state->service_name_override[0] = '\0';
     g_state->mode = mode;
     g_state->max_depth = (max_depth > PROFILER_MAX_STACK) ? PROFILER_MAX_STACK
                        : (max_depth < 1) ? 1 : (uint32_t)max_depth;
