@@ -1,0 +1,13 @@
+{
+    "name": "shyim/akari",
+    "type": "php-ext-zend",
+    "license": "MIT",
+    "description": "A high-performance PHP observability extension. Automatic OpenTelemetry tracing, sampling, and profiling - zero-config, near-zero overhead.",
+    "require": {
+        "php": ">=8.2,<8.6"
+    },
+    "php-ext": {
+        "priority": 90,
+        "configure-options": []
+    }
+}
