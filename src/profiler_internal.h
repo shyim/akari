@@ -142,6 +142,7 @@ void profiler_sql_truncate(const char *sql, size_t sql_len,
 /* ── Root span (defined in hook_root_span.c) ── */
 
 void init_root_span(profiler_state_t *state);
+void promote_root_to_web(profiler_state_t *state);
 void finalize_root_span(profiler_state_t *state);
 
 #endif /* PROFILER_INTERNAL_H */

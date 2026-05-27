@@ -178,6 +178,14 @@ void profiler_set_flush_callback(profiler_flush_fn fn, void *user_data)
     }
 }
 
+void profiler_set_flush_threshold(size_t threshold)
+{
+    /* A threshold of 0 would flush on every completed span; clamp to 1. */
+    if (g_state) {
+        g_state->flush_threshold = threshold ? threshold : 1;
+    }
+}
+
 profiler_state_t *profiler_get_state(void)
 {
     return g_state;

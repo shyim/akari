@@ -171,6 +171,7 @@ Functions that can introduce latency are traced with configurable thresholds:
 | `akari.udp_port` | `4319` | Forwarder UDP port |
 | `akari.trace_compile` | `0` | Profile file compilation time |
 | `akari.trace_gc` | `0` | Profile GC collect cycles time |
+| `akari.flush_threshold` | `4096` | Completed spans buffered before a mid-request flush |
 
 Akari only creates spans for the function calls covered by its built-in
 instrumentation hooks (databases, HTTP clients, caches, messaging, frameworks)

@@ -17,6 +17,7 @@ ZEND_BEGIN_MODULE_GLOBALS(akari)
     zend_long udp_port;
     zend_bool trace_compile;
     zend_bool trace_gc;
+    zend_long flush_threshold;
 ZEND_END_MODULE_GLOBALS(akari)
 
 ZEND_DECLARE_MODULE_GLOBALS(akari)
@@ -33,6 +34,7 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("akari.udp_port", "4319", PHP_INI_SYSTEM, OnUpdateLong, udp_port, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_compile", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_compile, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_gc", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_gc, zend_akari_globals, akari_globals)
+    STD_PHP_INI_ENTRY("akari.flush_threshold", "4096", PHP_INI_SYSTEM, OnUpdateLong, flush_threshold, zend_akari_globals, akari_globals)
 PHP_INI_END()
 
 static PHP_GINIT_FUNCTION(akari)
@@ -49,6 +51,7 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->udp_port = 4319;
     akari_globals->trace_compile = 0;
     akari_globals->trace_gc = 0;
+    akari_globals->flush_threshold = PROFILER_FLUSH_THRESHOLD;
 }
 
 /* Resolve service name: request override → pending → INI default */
@@ -152,6 +155,7 @@ ZEND_NAMED_FUNCTION(zf_akari_enable)
     ZEND_PARSE_PARAMETERS_NONE();
     profiler_rinit((uint32_t)AKARI_G(max_depth), AKARI_G(min_duration_ms));
     profiler_set_flush_callback(flush_callback, NULL);
+    profiler_set_flush_threshold((size_t)AKARI_G(flush_threshold));
 
     /* Copy any pre-enable pending service name into request state */
     profiler_state_t *st = profiler_get_state();
@@ -544,7 +548,7 @@ ZEND_NAMED_FUNCTION(zf_akari_mark_as_web)
     ZEND_PARSE_PARAMETERS_NONE();
     profiler_state_t *state = profiler_get_state();
     if (state) {
-        state->root.is_cli = 0;
+        promote_root_to_web(state);
     }
 }
 
@@ -617,6 +621,7 @@ PHP_RINIT_FUNCTION(akari)
     if (AKARI_G(enable)) {
         profiler_rinit((uint32_t)AKARI_G(max_depth), AKARI_G(min_duration_ms));
         profiler_set_flush_callback(flush_callback, NULL);
+        profiler_set_flush_threshold((size_t)AKARI_G(flush_threshold));
 
         /* Copy any pre-enable pending service name into request state */
         profiler_state_t *st = profiler_get_state();

@@ -156,6 +156,30 @@ void init_root_span(profiler_state_t *state)
     root->zend_assertions = val ? (int)atol(val) : -1;
 }
 
+void promote_root_to_web(profiler_state_t *state)
+{
+    profiler_root_span_t *root = &state->root;
+
+    /* No-op if the root is already an active web transaction. */
+    if (!root->is_cli && root->active) return;
+
+    /* In CLI, init_root_span leaves the root inactive and without an id/start
+     * time/name. Userland markAsWebTransaction() promotes it to a real root
+     * span: give it the identity and timing a request root needs so it is
+     * finalized and exported like any HTTP root. */
+    root->is_cli = 0;
+    if (!root->active) {
+        profiler_generate_hex_id(state, root->span_id, 16);
+        root->start_time_ns = realtime_ns();
+        root->status_code = SPAN_STATUS_UNSET;
+        root->active = 1;
+    }
+    if (!root->name[0]) {
+        memcpy(root->name, "CLI", 3);
+        root->name_len = 3;
+    }
+}
+
 void finalize_root_span(profiler_state_t *state)
 {
     profiler_root_span_t *root = &state->root;

@@ -276,6 +276,7 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms);
 void profiler_rshutdown(void);
 
 void profiler_set_flush_callback(profiler_flush_fn fn, void *user_data);
+void profiler_set_flush_threshold(size_t threshold);
 profiler_state_t *profiler_get_state(void);
 
 /* Helpers for export */
