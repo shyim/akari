@@ -5,6 +5,10 @@ PHP_ARG_ENABLE([akari],
   [no])
 
 if test "$PHP_AKARI" != "no"; then
+  AC_CHECK_HEADERS([curl/curl.h], [], [
+    AC_MSG_ERROR([curl headers not found. Install libcurl-dev or curl-devel.])
+  ])
+
   AC_DEFINE(HAVE_AKARI, 1, [Whether you have akari])
 
   PHP_ADD_INCLUDE($ext_srcdir/include)
