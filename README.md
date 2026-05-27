@@ -28,12 +28,12 @@ Akari (灯, "light") is a PHP C extension that illuminates your application's be
 ## Architecture
 
 ```
-PHP-FPM / CLI                      Go Forwarder                  Collector
-┌──────────────────┐  UDP/msgpack  ┌──────────────┐  OTLP/HTTP   ┌─────────┐
-│  akari          │──sendto()───>│ akari-forwarder│──POST JSON──>│ Jaeger  │
-│  (Akari)         │  fire&forget  │              │              │ Tempo   │
-└──────────────────┘  ~1μs         └──────────────┘              │ etc.    │
-                                                                  └─────────┘
+PHP-FPM / CLI                        Go Forwarder                    Collector
+┌──────────────────┐  UDP/msgpack ┌─────────────────┐  OTLP/HTTP  ┌───────────┐
+│                  │──sendto()──> │                 │──POST JSON> │  Jaeger   │
+│  akari (Akari)   │  fire&forget │ akari-forwarder │             │  Tempo    │
+│                  │  ~1μs        │                 │             │  etc.     │
+└──────────────────┘              └─────────────────┘             └───────────┘
 ```
 
 Spans are serialized as compact msgpack and sent via UDP to a local Go forwarder, which batches and forwards them to your OTLP collector. Log records emitted with `Akari\log()` travel the same UDP path and are forwarded to the collector's `/v1/logs` endpoint (spans go to `/v1/traces`).
