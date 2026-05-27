@@ -66,15 +66,22 @@ static const char *get_service_name(profiler_state_t *state)
     return AKARI_G(service_name);
 }
 
-/* Export: always UDP. Exports child spans AND finalized root span if present. */
+/* Export: always UDP. Exports child spans AND finalized root span if present,
+ * and any buffered log records (independent of spans — a CLI request may emit
+ * logs with no exportable root span). */
 static void export_spans(profiler_state_t *state)
 {
     if (!state) return;
-    int has_root = (state->root.end_time_ns > 0 && !state->root.is_cli);
-    if (state->span_count == 0 && !has_root) return;
     const char *service_name = get_service_name(state);
     if (!service_name) return;
-    udp_export_spans(state, service_name);
+
+    int has_root = (state->root.end_time_ns > 0 && !state->root.is_cli);
+    if (state->span_count > 0 || has_root) {
+        udp_export_spans(state, service_name);
+    }
+    if (state->log_record_count > 0) {
+        udp_export_logs(state, service_name);
+    }
 }
 
 /* Flush callback */
@@ -134,6 +141,15 @@ ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_log_exception, 0, 1, IS_VOID, 0)
     ZEND_ARG_OBJ_INFO(0, exception, Throwable, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_log, 0, 2, IS_VOID, 0)
+    ZEND_ARG_TYPE_INFO(0, level, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO(0, message, IS_STRING, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, context, IS_ARRAY, 0, "[]")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_get_logs_json, 0, 0, IS_STRING, 1)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_distributed_headers, 0, 0, IS_ARRAY, 0)
@@ -504,6 +520,127 @@ ZEND_NAMED_FUNCTION(zf_akari_log_exception)
     }
 }
 
+/* ── Userland API: log (OTLP logs signal) ── */
+
+ZEND_NAMED_FUNCTION(zf_akari_log)
+{
+    zend_string *level, *message;
+    zval *context = NULL;
+    ZEND_PARSE_PARAMETERS_START(2, 3)
+        Z_PARAM_STR(level)
+        Z_PARAM_STR(message)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ARRAY_OR_NULL(context)
+    ZEND_PARSE_PARAMETERS_END();
+
+    profiler_state_t *state = profiler_get_state();
+    if (!state || !state->active) return;
+
+    /* Hard ceiling on buffered records. If a flush could not drain the buffer
+     * (e.g. no flush callback, or the UDP send keeps failing), drop further
+     * records rather than grow without bound. */
+    if (state->log_record_count >= PROFILER_MAX_LOG_RECORDS) {
+        if (!state->log_overflow_warned) {
+            state->log_overflow_warned = 1;
+            php_error_docref(NULL, E_WARNING,
+                "akari: log record limit reached (%d), further logs dropped",
+                PROFILER_MAX_LOG_RECORDS);
+        }
+        return;
+    }
+
+    /* Grow the log_records array (doubling), mirroring exception_events. */
+    if (state->log_record_count >= state->log_record_capacity) {
+        size_t new_cap = state->log_record_capacity
+            ? state->log_record_capacity * 2
+            : PROFILER_INITIAL_LOG_RECORDS;
+        profiler_log_record_t *new_records = realloc(state->log_records,
+            new_cap * sizeof(profiler_log_record_t));
+        if (!new_records) return;
+        state->log_records = new_records;
+        state->log_record_capacity = new_cap;
+    }
+
+    profiler_log_record_t *rec = &state->log_records[state->log_record_count];
+    memset(rec, 0, sizeof(profiler_log_record_t));
+    rec->timestamp_ns = realtime_ns();
+
+    snprintf(rec->severity, sizeof(rec->severity), "%.*s",
+             (int)ZSTR_LEN(level), ZSTR_VAL(level));
+
+    size_t body_len = ZSTR_LEN(message);
+    if (body_len >= LOG_BODY_MAX) body_len = LOG_BODY_MAX - 1;
+    memcpy(rec->body, ZSTR_VAL(message), body_len);
+    rec->body[body_len] = '\0';
+    rec->body_len = body_len;
+
+    /* Trace context: current span, else root span, else none. */
+    memcpy(rec->trace_id, state->trace_id, 32);
+    uint32_t span_index;
+    if (profiler_current_span_index(state, &span_index) && span_index < state->span_count) {
+        memcpy(rec->span_id, state->spans[span_index].span_id, 16);
+        rec->has_span_id = 1;
+    } else if (state->root.active) {
+        memcpy(rec->span_id, state->root.span_id, 16);
+        rec->has_span_id = 1;
+    }
+
+    /* Context attributes: string-keyed scalars, stringified, capped. */
+    if (context && Z_TYPE_P(context) == IS_ARRAY) {
+        zend_string *k;
+        zval *v;
+        ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(context), k, v) {
+            if (!k) continue; /* skip integer keys */
+            if (rec->attr_count >= LOG_MAX_ATTRS) break;
+
+            uint8_t t = Z_TYPE_P(v);
+            if (t != IS_STRING && t != IS_LONG && t != IS_DOUBLE &&
+                t != IS_TRUE && t != IS_FALSE) {
+                continue; /* skip arrays/objects/null */
+            }
+
+            profiler_log_attr_t *a = &rec->attrs[rec->attr_count];
+            snprintf(a->key, sizeof(a->key), "%.*s", (int)ZSTR_LEN(k), ZSTR_VAL(k));
+
+            zend_string *sval = zval_get_string(v);
+            snprintf(a->value, sizeof(a->value), "%.*s",
+                     (int)ZSTR_LEN(sval), ZSTR_VAL(sval));
+            zend_string_release(sval);
+
+            rec->attr_count++;
+        } ZEND_HASH_FOREACH_END();
+    }
+
+    state->log_record_count++;
+
+    /* Export + compact once enough records have buffered, so a long-running
+     * request (e.g. a CLI worker logging in a loop) does not grow memory. */
+    maybe_flush_logs(state);
+}
+
+/* ── Userland API: getLogsJson (introspection/testing) ── */
+
+ZEND_NAMED_FUNCTION(zf_akari_get_logs_json)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    profiler_state_t *state = profiler_get_state();
+    if (!state || state->log_record_count == 0) {
+        RETURN_FALSE;
+    }
+    const char *service_name = get_service_name(state);
+    if (!service_name) service_name = "php";
+
+    size_t json_len = 0;
+    char *json = otlp_serialize_logs(state, service_name, &json_len);
+    if (!json) {
+        RETURN_FALSE;
+    }
+
+    zend_string *result = zend_string_init(json, json_len, 0);
+    free(json);
+    RETURN_STR(result);
+}
+
 /* ── Userland API: generateDistributedTracingHeaders ── */
 
 ZEND_NAMED_FUNCTION(zf_akari_generate_distributed_headers)
@@ -588,6 +725,8 @@ static const zend_function_entry akari_functions[] = {
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "setCustomVariable", zf_akari_set_custom_variable, arginfo_set_custom_var, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "createSpan", zf_akari_create_span, arginfo_create_span, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "logException", zf_akari_log_exception, arginfo_log_exception, 0)
+    ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "log", zf_akari_log, arginfo_log, 0)
+    ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "getLogsJson", zf_akari_get_logs_json, arginfo_get_logs_json, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "generateDistributedTracingHeaders", zf_akari_generate_distributed_headers, arginfo_distributed_headers, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "markAsWebTransaction", zf_akari_mark_as_web, arginfo_mark_as_web, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "markAsCliTransaction", zf_akari_mark_as_cli, arginfo_mark_as_cli, 0)

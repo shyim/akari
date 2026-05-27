@@ -38,9 +38,14 @@ func NewHTTP(endpoint string) *HTTPForwarder {
 	}
 }
 
-// Forward sends the payload to the OTLP /v1/traces endpoint.
-func (f *HTTPForwarder) Forward(ctx context.Context, payload []byte) error {
-	url := f.endpoint + "/v1/traces"
+// Forward sends the payload to the OTLP endpoint for the given signal
+// (/v1/traces or /v1/logs).
+func (f *HTTPForwarder) Forward(ctx context.Context, payload []byte, signal Signal) error {
+	path := "/v1/traces"
+	if signal == SignalLogs {
+		path = "/v1/logs"
+	}
+	url := f.endpoint + path
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {

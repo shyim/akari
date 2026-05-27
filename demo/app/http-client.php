@@ -13,7 +13,7 @@ function fetchUrl(string $url): array {
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         'Accept: application/json',
-        'X-Demo: otel_tracer',
+        'X-Demo: akari',
     ]);
     $body = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -42,4 +42,4 @@ $traceparent = $data['headers']['Traceparent'] ?? 'not found';
 echo "<h3>Injected traceparent header</h3>";
 echo "<pre>{$traceparent}</pre>";
 echo "<p>Format: <code>00-{trace_id}-{span_id}-01</code></p>";
-echo "<p><em>Check Jaeger — you'll see CLIENT spans with url.full, http.request.method, and the traceparent links requests to this trace</em></p>";
+echo "<p><em>Check <a href='http://localhost:3000'>Grafana</a> (Explore → Tempo) — you'll see CLIENT spans with url.full, http.request.method, and the traceparent links requests to this trace</em></p>";

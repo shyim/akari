@@ -32,4 +32,4 @@ foreach ($results as $row) {
     echo "<tr><td>{$row['id']}</td><td>{$row['name']}</td><td>{$row['email']}</td></tr>";
 }
 echo "</table>";
-echo "<p><em>Check Jaeger — you'll see CLIENT spans with db.system=sqlite and db.statement</em></p>";
+echo "<p><em>Check <a href='http://localhost:3000'>Grafana</a> (Explore → Tempo) — you'll see CLIENT spans with db.system=sqlite and db.statement</em></p>";

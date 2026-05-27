@@ -61,6 +61,7 @@ void profiler_mshutdown(void)
         free(g_state->msg_attrs);
         free(g_state->template_attrs);
         free(g_state->exception_events);
+        free(g_state->log_records);
         free(g_state);
         g_state = NULL;
     }
@@ -91,6 +92,9 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms)
     g_state->msg_attr_count = 0;
     g_state->template_attr_count = 0;
     g_state->exception_event_count = 0;
+    g_state->log_record_count = 0;
+    g_state->log_records_sent = 0;
+    g_state->log_overflow_warned = 0;
     g_state->root_exception_escaped = 0;
     g_state->root_exception_message[0] = '\0';
     g_state->stack_depth = 0;
@@ -163,6 +167,10 @@ void profiler_rshutdown(void)
     free(g_state->msg_attrs);  g_state->msg_attrs = NULL;  g_state->msg_attr_capacity = 0;
     free(g_state->template_attrs); g_state->template_attrs = NULL; g_state->template_attr_capacity = 0;
     free(g_state->exception_events); g_state->exception_events = NULL; g_state->exception_event_capacity = 0;
+    free(g_state->log_records); g_state->log_records = NULL; g_state->log_record_capacity = 0;
+    g_state->log_record_count = 0;
+    g_state->log_records_sent = 0;
+    g_state->log_overflow_warned = 0;
 
     /* Reset userland API state */
     g_state->tag_count = 0;

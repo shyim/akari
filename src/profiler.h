@@ -151,6 +151,40 @@ typedef struct {
     void *exception_obj;                     /* zend_object* thrown (engine hook only) */
 } profiler_exception_event_t;
 
+/* ── Log records (userland Akari\log) ── */
+
+#define LOG_LEVEL_MAX     16    /* severity text, e.g. "warning" */
+#define LOG_BODY_MAX      1024  /* message body */
+#define LOG_ATTR_KEY_MAX  64
+#define LOG_ATTR_VAL_MAX  256
+#define LOG_MAX_ATTRS     16    /* per-record context attribute cap */
+
+#define PROFILER_INITIAL_LOG_RECORDS 4
+/* Buffered log records trigger a flush at this count; after export the sent
+ * records are compacted away, bounding resident memory for high-volume or
+ * long-running (CLI worker) requests. */
+#define PROFILER_LOG_FLUSH_THRESHOLD 512
+/* Hard ceiling on live (buffered, unsent) records. Once reached, further
+ * Akari\log() calls are dropped with a one-time warning. */
+#define PROFILER_MAX_LOG_RECORDS     (16 * 1024)
+
+typedef struct {
+    char key[LOG_ATTR_KEY_MAX];
+    char value[LOG_ATTR_VAL_MAX];
+} profiler_log_attr_t;
+
+typedef struct {
+    uint64_t timestamp_ns;                 /* realtime_ns() at log() call */
+    char severity[LOG_LEVEL_MAX];          /* severity text as given */
+    char body[LOG_BODY_MAX];               /* message */
+    size_t body_len;
+    char trace_id[32];                     /* snapshot of state->trace_id */
+    char span_id[16];                      /* current/root span_id when has_span_id */
+    int has_span_id;                       /* 0 = no active span/root, span_id unset */
+    profiler_log_attr_t attrs[LOG_MAX_ATTRS];
+    int attr_count;
+} profiler_log_record_t;
+
 /* ── Root span (HTTP request) ── */
 
 #define ROOT_ATTR_MAX 256
@@ -247,6 +281,15 @@ typedef struct profiler_state_s {
     profiler_exception_event_t *exception_events;
     size_t exception_event_count;
     size_t exception_event_capacity;
+
+    /* Log records (userland Akari\log). log_records_sent is the export cursor:
+     * records below it have already been sent over UDP (dedup across the
+     * threshold flush and the final shutdown flush, mirroring span->exported). */
+    profiler_log_record_t *log_records;
+    size_t log_record_count;
+    size_t log_record_capacity;
+    size_t log_records_sent;
+    int log_overflow_warned;          /* one-time warning when the hard cap is hit */
 
     /* Escaped (uncaught) exception tracking, independent of hooked spans.
      * Set when an exception unwinds past the outermost frame while still live

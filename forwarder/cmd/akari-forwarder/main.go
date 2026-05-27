@@ -89,14 +89,21 @@ func flushLoop(ctx context.Context, buf *buffer.Buffer, fwd forwarder.Forwarder,
 
 func forwardBatch(ctx context.Context, batch [][]byte, fwd forwarder.Forwarder) {
 	for _, payload := range batch {
-		otlpData, err := transform.Transform(payload)
+		res, err := transform.Transform(payload)
 		if err != nil {
 			log.Printf("transform error (%d bytes): %v", len(payload), err)
 			continue
 		}
 
-		if err := fwd.Forward(ctx, otlpData); err != nil {
-			log.Printf("forward error: %v", err)
+		if len(res.Traces) > 0 {
+			if err := fwd.Forward(ctx, res.Traces, forwarder.SignalTraces); err != nil {
+				log.Printf("forward traces error: %v", err)
+			}
+		}
+		if len(res.Logs) > 0 {
+			if err := fwd.Forward(ctx, res.Logs, forwarder.SignalLogs); err != nil {
+				log.Printf("forward logs error: %v", err)
+			}
 		}
 	}
 }

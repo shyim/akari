@@ -394,3 +394,118 @@ void udp_export_spans(profiler_state_t *state, const char *service_name)
 
     free(batch_indices);
 }
+
+/* ── Log record export ── */
+
+static void write_log_record_msgpack(msgpack_buf_t *buf, const profiler_log_record_t *rec)
+{
+    uint32_t field_count = 3; /* tn, sv, bo always present */
+    if (rec->trace_id[0]) field_count++;
+    if (rec->has_span_id) field_count++;
+    if (rec->attr_count > 0) field_count++;
+
+    msgpack_write_map(buf, field_count);
+    msgpack_write_key(buf, "tn");
+    msgpack_write_uint64(buf, rec->timestamp_ns);
+    msgpack_write_key(buf, "sv");
+    msgpack_write_str(buf, rec->severity, strlen(rec->severity));
+    msgpack_write_key(buf, "bo");
+    msgpack_write_str(buf, rec->body, rec->body_len);
+
+    if (rec->trace_id[0]) {
+        msgpack_write_key(buf, "tr");
+        msgpack_write_bin(buf, rec->trace_id, 32);
+    }
+    if (rec->has_span_id) {
+        msgpack_write_key(buf, "sp");
+        msgpack_write_bin(buf, rec->span_id, 16);
+    }
+    if (rec->attr_count > 0) {
+        msgpack_write_key(buf, "at");
+        msgpack_write_array(buf, (uint32_t)rec->attr_count);
+        for (int i = 0; i < rec->attr_count; i++) {
+            msgpack_write_map(buf, 2);
+            msgpack_write_key(buf, "k");
+            msgpack_write_str(buf, rec->attrs[i].key, strlen(rec->attrs[i].key));
+            msgpack_write_key(buf, "v");
+            msgpack_write_str(buf, rec->attrs[i].value, strlen(rec->attrs[i].value));
+        }
+    }
+}
+
+/* Logs envelope: same {v, sn, ti} header as spans but an "lg" array (no "sp"). */
+static void write_logs_header(msgpack_buf_t *buf, profiler_state_t *state,
+                              const char *service_name, uint32_t total_logs)
+{
+    msgpack_write_map(buf, 4);
+    msgpack_write_key(buf, "v");
+    msgpack_write_uint8(buf, 1);
+    msgpack_write_key(buf, "sn");
+    msgpack_write_str(buf, service_name, strlen(service_name));
+    msgpack_write_key(buf, "ti");
+    msgpack_write_bin(buf, state->trace_id, 32);
+    msgpack_write_key(buf, "lg");
+    msgpack_write_array(buf, total_logs);
+}
+
+static size_t encoded_logs_header_size(profiler_state_t *state, const char *service_name,
+                                       uint32_t total_logs)
+{
+    msgpack_buf_t buf;
+    msgpack_buf_init(&buf, 128);
+    write_logs_header(&buf, state, service_name, total_logs);
+    size_t len = buf.len;
+    msgpack_buf_free(&buf);
+    return len;
+}
+
+static size_t encoded_log_size(profiler_state_t *state, size_t log_idx)
+{
+    msgpack_buf_t buf;
+    msgpack_buf_init(&buf, 512);
+    write_log_record_msgpack(&buf, &state->log_records[log_idx]);
+    size_t len = buf.len;
+    msgpack_buf_free(&buf);
+    return len;
+}
+
+void udp_export_logs(profiler_state_t *state, const char *service_name)
+{
+    if (g_udp_fd < 0 || !state) return;
+    if (state->log_records_sent >= state->log_record_count) return;
+
+    size_t i = state->log_records_sent;
+    while (i < state->log_record_count) {
+        size_t batch_start = i;
+        size_t batch_count = 0;
+        size_t payload = 0;
+
+        while (i < state->log_record_count) {
+            size_t rec_size = encoded_log_size(state, i);
+            size_t hdr = encoded_logs_header_size(state, service_name, (uint32_t)(batch_count + 1));
+            if (hdr + payload + rec_size > UDP_MAX_DATAGRAM_SIZE && batch_count > 0) {
+                break; /* flush what we have; this record starts the next batch */
+            }
+            payload += rec_size;
+            batch_count++;
+            i++;
+            /* A single record that alone exceeds the datagram limit is still
+             * emitted (buffer sizes keep this from happening in practice). */
+        }
+
+        msgpack_buf_t buf;
+        msgpack_buf_init(&buf, 4096);
+        write_logs_header(&buf, state, service_name, (uint32_t)batch_count);
+        for (size_t j = batch_start; j < batch_start + batch_count; j++) {
+            write_log_record_msgpack(&buf, &state->log_records[j]);
+        }
+        int sent = send_datagram(buf.data, buf.len);
+        msgpack_buf_free(&buf);
+        if (!sent) {
+            /* Leave this batch (and the rest) unsent; retried at the next flush
+             * or final shutdown. Do not advance the cursor past unsent records. */
+            break;
+        }
+        state->log_records_sent = batch_start + batch_count;
+    }
+}

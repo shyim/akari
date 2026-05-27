@@ -36,7 +36,7 @@ PHP-FPM / CLI                      Go Forwarder                  Collector
                                                                   └─────────┘
 ```
 
-Spans are serialized as compact msgpack and sent via UDP to a local Go forwarder, which batches and forwards them to your OTLP collector.
+Spans are serialized as compact msgpack and sent via UDP to a local Go forwarder, which batches and forwards them to your OTLP collector. Log records emitted with `Akari\log()` travel the same UDP path and are forwarded to the collector's `/v1/logs` endpoint (spans go to `/v1/traces`).
 
 ---
 
@@ -204,9 +204,9 @@ use function Akari\{
     enable, disable, createSpan,
     setTransactionName, getTransactionName, setServiceName,
     addTag, getTags, removeTag, setCustomVariable,
-    logException, generateDistributedTracingHeaders,
+    logException, log, generateDistributedTracingHeaders,
     markAsWebTransaction, markAsCliTransaction,
-    isProfiling, getSpanCount, getSpansJson
+    isProfiling, getSpanCount, getSpansJson, getLogsJson
 };
 
 // Manual control
@@ -216,6 +216,10 @@ setTransactionName('POST /checkout');
 addTag('customer_id', '42');
 logException($e);
 
+// OTLP logs — PSR-3 style. Each record carries the active trace_id and the
+// current (or root) span_id for correlation, and is forwarded to /v1/logs.
+log('warning', 'payment retry', ['attempt' => 2, 'gateway' => 'stripe']);
+
 // W3C traceparent header for manual propagation
 $headers = generateDistributedTracingHeaders();
 // → ['traceparent' => '00-abc123...-def456...-01']
@@ -224,7 +228,8 @@ disable();
 
 // Introspection
 echo getSpanCount();    // number of spans this request
-echo getSpansJson();    // OTLP JSON for debugging
+echo getSpansJson();    // OTLP traces JSON for debugging
+echo getLogsJson();     // OTLP logs JSON for debugging
 ```
 
 ---

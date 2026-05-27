@@ -1,7 +1,10 @@
 <?php
 /**
- * Combined demo — shows all instrumentation features in one trace.
+ * Combined demo — shows all instrumentation features in one trace, plus a
+ * correlated OTLP log record via Akari\log().
  */
+
+use function Akari\log;
 
 class UserService {
     private PDO $db;
@@ -52,6 +55,9 @@ class RequestHandler {
         // Fetch users from DB
         $users = $userService->findAll();
 
+        // Emit a structured log correlated to this trace.
+        log('info', 'loaded users', ['count' => count($users)]);
+
         // Enrich with avatar URLs (outgoing HTTP)
         $enriched = array_map(function($user) use ($apiClient) {
             $user['avatar'] = $apiClient->fetchUserAvatar($user['email']);
@@ -68,6 +74,7 @@ class RequestHandler {
         $html .= "<li>INTERNAL spans (PHP functions/methods)</li>";
         $html .= "<li>CLIENT spans (PDO queries with db.statement)</li>";
         $html .= "<li>CLIENT spans (curl requests with traceparent injection)</li>";
+        $html .= "<li>An OTLP log record (Akari\\log) carrying this trace's id</li>";
         $html .= "</ul>";
         $html .= "<table border='1' cellpadding='5'>";
         $html .= "<tr><th>Name</th><th>Email</th><th>Avatar</th></tr>";
@@ -76,7 +83,7 @@ class RequestHandler {
             $html .= "<tr><td>{$user['name']}</td><td>{$user['email']}</td><td>{$avatar}</td></tr>";
         }
         $html .= "</table>";
-        $html .= "<p><em>Open <a href='http://localhost:16686'>Jaeger</a>, select service 'demo-php-app', and click 'Find Traces'</em></p>";
+        $html .= "<p><em>Open <a href='http://localhost:3000'>Grafana</a> → Explore → Tempo for the trace, and Loki ({service_name=\"demo-php-app\"}) for the log.</em></p>";
         return $html;
     }
 }

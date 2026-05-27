@@ -5,16 +5,36 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// Datagram is the wire format sent by the PHP extension over UDP.
+// Datagram is the wire format sent by the PHP extension over UDP. A datagram
+// carries either spans (from udp_export_spans) or log records (from
+// udp_export_logs), never both — but the type tolerates either being present.
 type Datagram struct {
-	Version     uint8  `msgpack:"v"`
-	ServiceName string `msgpack:"sn"`
-	TraceID     []byte `msgpack:"ti"`
-	Spans       []Span `msgpack:"sp"`
+	Version     uint8       `msgpack:"v"`
+	ServiceName string      `msgpack:"sn"`
+	TraceID     []byte      `msgpack:"ti"`
+	Spans       []Span      `msgpack:"sp,omitempty"`
+	Logs        []LogRecord `msgpack:"lg,omitempty"`
+}
+
+// LogAttr is a single context key/value (always string-valued from PHP).
+type LogAttr struct {
+	Key   string `msgpack:"k"`
+	Value string `msgpack:"v"`
+}
+
+// LogRecord mirrors the C profiler_log_record_t msgpack encoding.
+type LogRecord struct {
+	TimeNs       uint64    `msgpack:"tn"`
+	SeverityText string    `msgpack:"sv"`
+	Body         string    `msgpack:"bo"`
+	TraceID      []byte    `msgpack:"tr,omitempty"`
+	SpanID       []byte    `msgpack:"sp,omitempty"`
+	Attributes   []LogAttr `msgpack:"at,omitempty"`
 }
 
 // Span represents a single span in the datagram.
@@ -145,6 +165,53 @@ type otlpAnyValue struct {
 	IntValue    *string `json:"intValue,omitempty"`
 }
 
+// OTLP logs JSON structures (ExportLogsServiceRequest subset).
+type otlpLogsRequest struct {
+	ResourceLogs []otlpResourceLogs `json:"resourceLogs"`
+}
+
+type otlpResourceLogs struct {
+	Resource  otlpResource   `json:"resource"`
+	ScopeLogs []otlpScopeLog `json:"scopeLogs"`
+}
+
+type otlpScopeLog struct {
+	Scope      otlpScope       `json:"scope"`
+	LogRecords []otlpLogRecord `json:"logRecords"`
+}
+
+type otlpLogRecord struct {
+	TimeUnixNano   string         `json:"timeUnixNano"`
+	SeverityNumber int            `json:"severityNumber"`
+	SeverityText   string         `json:"severityText,omitempty"`
+	Body           otlpAnyValue   `json:"body"`
+	TraceID        string         `json:"traceId,omitempty"`
+	SpanID         string         `json:"spanId,omitempty"`
+	Attributes     []otlpKeyValue `json:"attributes"`
+}
+
+// severityNumber maps a PSR-3 / common severity text onto the OTLP
+// SeverityNumber buckets (TRACE=1, DEBUG=5, INFO=9, WARN=13, ERROR=17,
+// FATAL=21). Unknown text defaults to INFO.
+func severityNumber(text string) int {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "trace":
+		return 1
+	case "debug":
+		return 5
+	case "info", "notice":
+		return 9
+	case "warn", "warning":
+		return 13
+	case "error", "err", "critical", "crit", "alert":
+		return 17
+	case "fatal", "emergency", "emerg":
+		return 21
+	default:
+		return 9
+	}
+}
+
 // isZeroID checks if a byte slice is all zeros (null bytes) or all ASCII '0' chars.
 func isZeroID(b []byte) bool {
 	allNull := true
@@ -184,31 +251,57 @@ func init() {
 	cachedOS = runtime.GOOS
 }
 
-// Transform decodes a msgpack datagram and returns OTLP JSON bytes.
-func Transform(data []byte) ([]byte, error) {
-	var dg Datagram
-	if err := msgpack.Unmarshal(data, &dg); err != nil {
-		return nil, fmt.Errorf("msgpack decode: %w", err)
-	}
+// Result holds the OTLP JSON bodies produced from one datagram. Each is nil
+// when the datagram carried no records of that signal, so the caller only
+// POSTs the endpoints that have data.
+type Result struct {
+	Traces []byte
+	Logs   []byte
+}
 
-	if dg.Version != 1 {
-		return nil, fmt.Errorf("unsupported protocol version: %d", dg.Version)
-	}
-
-	traceID := string(dg.TraceID)
-
-	// Build resource attributes
-	resAttrs := []otlpKeyValue{
-		{Key: "service.name", Value: strVal(dg.ServiceName)},
+// buildResourceAttrs builds the OTLP resource attributes shared by all signals.
+func buildResourceAttrs(serviceName string) []otlpKeyValue {
+	attrs := []otlpKeyValue{
+		{Key: "service.name", Value: strVal(serviceName)},
 		{Key: "telemetry.sdk.name", Value: strVal("opentelemetry")},
 		{Key: "telemetry.sdk.language", Value: strVal("php")},
 		{Key: "telemetry.sdk.version", Value: strVal("0.1.0")},
 	}
 	if cachedHostname != "" {
-		resAttrs = append(resAttrs, otlpKeyValue{Key: "host.name", Value: strVal(cachedHostname)})
+		attrs = append(attrs, otlpKeyValue{Key: "host.name", Value: strVal(cachedHostname)})
 	}
 	if cachedOS != "" {
-		resAttrs = append(resAttrs, otlpKeyValue{Key: "os.type", Value: strVal(cachedOS)})
+		attrs = append(attrs, otlpKeyValue{Key: "os.type", Value: strVal(cachedOS)})
+	}
+	return attrs
+}
+
+// Transform decodes a msgpack datagram into OTLP JSON bodies (traces and/or logs).
+func Transform(data []byte) (Result, error) {
+	var dg Datagram
+	if err := msgpack.Unmarshal(data, &dg); err != nil {
+		return Result{}, fmt.Errorf("msgpack decode: %w", err)
+	}
+
+	if dg.Version != 1 {
+		return Result{}, fmt.Errorf("unsupported protocol version: %d", dg.Version)
+	}
+
+	traceID := string(dg.TraceID)
+	resAttrs := buildResourceAttrs(dg.ServiceName)
+
+	var result Result
+
+	if len(dg.Logs) > 0 {
+		logsJSON, err := buildLogsRequest(dg.Logs, resAttrs)
+		if err != nil {
+			return Result{}, err
+		}
+		result.Logs = logsJSON
+	}
+
+	if len(dg.Spans) == 0 {
+		return result, nil
 	}
 
 	// Transform spans
@@ -385,6 +478,48 @@ func Transform(data []byte) ([]byte, error) {
 			ScopeSpans: []otlpScopeSpan{{
 				Scope: otlpScope{Name: "akari", Version: "0.1.0"},
 				Spans: otlpSpans,
+			}},
+		}},
+	}
+
+	tracesJSON, err := json.Marshal(req)
+	if err != nil {
+		return Result{}, err
+	}
+	result.Traces = tracesJSON
+	return result, nil
+}
+
+// buildLogsRequest converts decoded log records into an OTLP logs JSON body.
+func buildLogsRequest(logs []LogRecord, resAttrs []otlpKeyValue) ([]byte, error) {
+	records := make([]otlpLogRecord, 0, len(logs))
+	for _, lr := range logs {
+		rec := otlpLogRecord{
+			TimeUnixNano:   fmt.Sprintf("%d", lr.TimeNs),
+			SeverityNumber: severityNumber(lr.SeverityText),
+			SeverityText:   lr.SeverityText,
+			Body:           strVal(lr.Body),
+		}
+		if len(lr.TraceID) == 32 && !isZeroID(lr.TraceID) {
+			rec.TraceID = string(lr.TraceID)
+		}
+		if len(lr.SpanID) == 16 && !isZeroID(lr.SpanID) {
+			rec.SpanID = string(lr.SpanID)
+		}
+		attrs := make([]otlpKeyValue, 0, len(lr.Attributes))
+		for _, a := range lr.Attributes {
+			attrs = append(attrs, otlpKeyValue{Key: a.Key, Value: strVal(a.Value)})
+		}
+		rec.Attributes = attrs
+		records = append(records, rec)
+	}
+
+	req := otlpLogsRequest{
+		ResourceLogs: []otlpResourceLogs{{
+			Resource: otlpResource{Attributes: resAttrs},
+			ScopeLogs: []otlpScopeLog{{
+				Scope:      otlpScope{Name: "akari", Version: "0.1.0"},
+				LogRecords: records,
 			}},
 		}},
 	}

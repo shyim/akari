@@ -60,7 +60,9 @@ uint32_t find_or_add_frame(profiler_state_t *state,
     uint32_t lineno);
 int ensure_span_capacity(profiler_state_t *state);
 void maybe_flush(profiler_state_t *state);
+void maybe_flush_logs(profiler_state_t *state);
 void profiler_compact_exported_spans(profiler_state_t *state);
+void profiler_compact_exported_logs(profiler_state_t *state);
 
 /* ── Attribute / event removal (defined in profiler_span.c) ── */
 

@@ -48,13 +48,13 @@ func TestBasicSpan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := Transform(data)
+	res, err := Transform(data)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var v map[string]interface{}
-	if err := json.Unmarshal(out, &v); err != nil {
+	if err := json.Unmarshal(res.Traces, &v); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 
@@ -96,13 +96,13 @@ func TestExceptionEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := Transform(data)
+	res, err := Transform(data)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var v map[string]interface{}
-	json.Unmarshal(out, &v)
+	json.Unmarshal(res.Traces, &v)
 
 	rss := v["resourceSpans"].([]interface{})
 	rs := rss[0].(map[string]interface{})
@@ -163,12 +163,12 @@ func TestRootSpanRuntimeEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := Transform(data)
+	res, err := Transform(data)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	raw := string(out)
+	raw := string(res.Traces)
 
 	checks := []string{
 		"php.version",
@@ -207,12 +207,12 @@ func TestRootSpanFramework(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := Transform(data)
+	res, err := Transform(data)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	raw := string(out)
+	raw := string(res.Traces)
 
 	checks := []string{
 		"http.route",
@@ -288,4 +288,141 @@ func searchString(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestLogsTransform(t *testing.T) {
+	dg := Datagram{
+		Version:     1,
+		ServiceName: "svc",
+		TraceID:     makeTraceID(),
+		Logs: []LogRecord{{
+			TimeNs:       1500,
+			SeverityText: "warning",
+			Body:         "hello",
+			TraceID:      makeTraceID(),
+			SpanID:       makeSpanID(),
+			Attributes:   []LogAttr{{Key: "user_id", Value: "42"}},
+		}},
+	}
+
+	data, err := msgpack.Marshal(dg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Transform(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Logs) == 0 {
+		t.Fatal("expected logs body")
+	}
+	if len(res.Traces) != 0 {
+		t.Fatal("expected no traces body for a logs-only datagram")
+	}
+
+	var v map[string]interface{}
+	if err := json.Unmarshal(res.Logs, &v); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	rl := v["resourceLogs"].([]interface{})[0].(map[string]interface{})
+	resAttrs := rl["resource"].(map[string]interface{})["attributes"].([]interface{})
+	svc := resAttrs[0].(map[string]interface{})
+	if svc["value"].(map[string]interface{})["stringValue"] != "svc" {
+		t.Fatal("wrong service.name")
+	}
+
+	sl := rl["scopeLogs"].([]interface{})[0].(map[string]interface{})
+	recs := sl["logRecords"].([]interface{})
+	if len(recs) != 1 {
+		t.Fatalf("expected 1 log record, got %d", len(recs))
+	}
+	rec := recs[0].(map[string]interface{})
+
+	if int(rec["severityNumber"].(float64)) != 13 {
+		t.Errorf("severityNumber = %v, want 13", rec["severityNumber"])
+	}
+	if rec["severityText"] != "warning" {
+		t.Errorf("severityText = %v, want warning", rec["severityText"])
+	}
+	if rec["body"].(map[string]interface{})["stringValue"] != "hello" {
+		t.Errorf("body = %v, want hello", rec["body"])
+	}
+	if rec["traceId"] != string(makeTraceID()) {
+		t.Error("traceId not set")
+	}
+	if rec["spanId"] != string(makeSpanID()) {
+		t.Error("spanId not set")
+	}
+	recAttrs := rec["attributes"].([]interface{})
+	a := recAttrs[0].(map[string]interface{})
+	if a["key"] != "user_id" || a["value"].(map[string]interface{})["stringValue"] != "42" {
+		t.Errorf("attribute mismatch: %v", a)
+	}
+}
+
+func TestSeverityMapping(t *testing.T) {
+	cases := map[string]int{
+		"trace": 1, "debug": 5, "info": 9, "notice": 9,
+		"warning": 13, "warn": 13, "error": 17, "critical": 17,
+		"alert": 17, "fatal": 21, "emergency": 21, "unknown": 9,
+		"WARNING": 13, "  Info  ": 9,
+	}
+	for text, want := range cases {
+		if got := severityNumber(text); got != want {
+			t.Errorf("severityNumber(%q) = %d, want %d", text, got, want)
+		}
+	}
+}
+
+func TestLogsAndSpansSeparate(t *testing.T) {
+	// Spans-only datagram → only traces body.
+	spansDg := makeDatagram("svc", makeTraceID(), Span{
+		SpanID: makeSpanID(), Name: "x", Kind: 1, StartNs: 1, EndNs: 2,
+	})
+	data, _ := msgpack.Marshal(spansDg)
+	res, err := Transform(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Traces) == 0 || len(res.Logs) != 0 {
+		t.Errorf("spans-only: traces=%d logs=%d", len(res.Traces), len(res.Logs))
+	}
+
+	// Logs-only datagram → only logs body.
+	logsDg := Datagram{
+		Version: 1, ServiceName: "svc", TraceID: makeTraceID(),
+		Logs: []LogRecord{{TimeNs: 1, SeverityText: "info", Body: "x"}},
+	}
+	data, _ = msgpack.Marshal(logsDg)
+	res, err = Transform(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Logs) == 0 || len(res.Traces) != 0 {
+		t.Errorf("logs-only: traces=%d logs=%d", len(res.Traces), len(res.Logs))
+	}
+}
+
+func TestLogRecordRoundtrip(t *testing.T) {
+	original := LogRecord{
+		TimeNs: 999, SeverityText: "error", Body: "boom",
+		TraceID: makeTraceID(), SpanID: makeSpanID(),
+		Attributes: []LogAttr{{Key: "k", Value: "v"}},
+	}
+	data, err := msgpack.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded LogRecord
+	if err := msgpack.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SeverityText != "error" || decoded.Body != "boom" || decoded.TimeNs != 999 {
+		t.Error("scalar fields not preserved")
+	}
+	if len(decoded.Attributes) != 1 || decoded.Attributes[0].Key != "k" || decoded.Attributes[0].Value != "v" {
+		t.Error("attributes not preserved")
+	}
 }

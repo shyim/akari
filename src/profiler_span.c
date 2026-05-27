@@ -656,3 +656,39 @@ void maybe_flush(profiler_state_t *state)
     profiler_compact_exported_spans(state);
     state->overflow_warned = 0;
 }
+
+/* Drop already-sent log records (indices < log_records_sent) by shifting the
+ * unsent tail down. Unlike spans, log records are not referenced by index
+ * elsewhere, so no remap is needed. */
+void profiler_compact_exported_logs(profiler_state_t *state)
+{
+    if (!state || state->log_records_sent == 0) return;
+
+    size_t sent = state->log_records_sent;
+    if (sent > state->log_record_count) sent = state->log_record_count;
+
+    size_t remaining = state->log_record_count - sent;
+    if (remaining > 0) {
+        memmove(&state->log_records[0], &state->log_records[sent],
+                remaining * sizeof(profiler_log_record_t));
+    }
+    state->log_record_count = remaining;
+    state->log_records_sent = 0;
+}
+
+/* Flush + compact buffered log records once enough have accumulated, bounding
+ * resident memory across a long-running request. Called from Akari\log() after
+ * a record is appended. */
+void maybe_flush_logs(profiler_state_t *state)
+{
+    if (!state->flush_fn) return;
+
+    size_t unsent = (state->log_record_count > state->log_records_sent)
+        ? state->log_record_count - state->log_records_sent : 0;
+    if (unsent < PROFILER_LOG_FLUSH_THRESHOLD) return;
+
+    state->flush_fn(state, state->flush_user_data);
+    /* udp_export_logs advances log_records_sent for the records it sent; drop
+     * those so the buffer does not grow without bound. */
+    profiler_compact_exported_logs(state);
+}

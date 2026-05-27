@@ -21,13 +21,15 @@ services:
     build:
       context: forwarder
     environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4318
       - OTEL_FORWARDER_LISTEN=0.0.0.0:4319
+    depends_on:
+      - lgtm
 
-  jaeger:
-    image: jaegertracing/all-in-one:latest
+  # Grafana LGTM: Loki (logs) + Grafana + Tempo (traces) + Prometheus, with an
+  # OTLP receiver on 4317/4318. Traces land in Tempo, logs in Loki, both
+  # viewable (and cross-linked) in Grafana.
+  lgtm:
+    image: grafana/otel-lgtm:latest
     ports:
-      - "16686:16686"
-      - "4318:4318"
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
+      - "3000:3000"   # Grafana UI

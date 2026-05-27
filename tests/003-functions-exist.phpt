@@ -10,6 +10,8 @@ $functions = [
     'Akari\getSpanCount',
     'Akari\getFrameCount',
     'Akari\getSpansJson',
+    'Akari\log',
+    'Akari\getLogsJson',
 ];
 
 foreach ($functions as $fn) {
@@ -22,3 +24,5 @@ Akari\disable: yes
 Akari\getSpanCount: yes
 Akari\getFrameCount: yes
 Akari\getSpansJson: yes
+Akari\log: yes
+Akari\getLogsJson: yes

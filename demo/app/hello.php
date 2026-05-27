@@ -31,4 +31,4 @@ echo "<h2>Function Tracing Demo</h2>";
 echo $greeting;
 echo "<p>fibonacci(5) = {$fib}</p>";
 echo "<p>transform('abc') = {$transformed}</p>";
-echo "<p><em>Check <a href='http://localhost:16686'>Jaeger</a> for traces — look for service 'demo-php-app'</em></p>";
+echo "<p><em>Check <a href='http://localhost:3000'>Grafana</a> (Explore → Tempo) for traces — look for service 'demo-php-app'</em></p>";

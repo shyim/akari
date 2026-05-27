@@ -463,3 +463,75 @@ char *otlp_serialize_spans(profiler_state_t *state, const char *service_name, si
     if (out_len) *out_len = jb.len;
     return jb.buf;
 }
+
+/* ── Log records (Akari\log) ── */
+
+static void write_log_record_json(json_buf_t *jb, const profiler_log_record_t *rec)
+{
+    jb_str(jb, "{\"timeUnixNano\":\"");
+    jb_uint64(jb, rec->timestamp_ns);
+    jb_str(jb, "\"");
+
+    if (rec->severity[0]) {
+        jb_str(jb, ",\"severityText\":\"");
+        jb_json_escaped(jb, rec->severity, strlen(rec->severity));
+        jb_str(jb, "\"");
+    }
+
+    jb_str(jb, ",\"body\":{\"stringValue\":\"");
+    jb_json_escaped(jb, rec->body, rec->body_len);
+    jb_str(jb, "\"}");
+
+    if (rec->trace_id[0]) {
+        jb_str(jb, ",\"traceId\":\"");
+        jb_append(jb, rec->trace_id, 32);
+        jb_str(jb, "\"");
+    }
+    if (rec->has_span_id) {
+        jb_str(jb, ",\"spanId\":\"");
+        jb_append(jb, rec->span_id, 16);
+        jb_str(jb, "\"");
+    }
+
+    jb_str(jb, ",\"attributes\":[");
+    for (int i = 0; i < rec->attr_count; i++) {
+        if (i > 0) jb_char(jb, ',');
+        jb_str(jb, "{\"key\":\"");
+        jb_json_escaped(jb, rec->attrs[i].key, strlen(rec->attrs[i].key));
+        jb_str(jb, "\",\"value\":{\"stringValue\":\"");
+        jb_json_escaped(jb, rec->attrs[i].value, strlen(rec->attrs[i].value));
+        jb_str(jb, "\"}}");
+    }
+    jb_str(jb, "]}");
+}
+
+char *otlp_serialize_logs(profiler_state_t *state, const char *service_name, size_t *out_len)
+{
+    if (!state || state->log_record_count == 0) {
+        if (out_len) *out_len = 0;
+        return NULL;
+    }
+
+    json_buf_t jb;
+    jb_init(&jb, state->log_record_count * 300 + 2048);
+    if (!jb.buf) {
+        if (out_len) *out_len = 0;
+        return NULL;
+    }
+
+    jb_str(&jb, "{\"resourceLogs\":[{\"resource\":{\"attributes\":["
+                 "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"");
+    jb_json_escaped(&jb, service_name, strlen(service_name));
+    jb_str(&jb, "\"}}]},\"scopeLogs\":[{\"scope\":{\"name\":\"akari\","
+                 "\"version\":\"" PHP_AKARI_VERSION "\"},\"logRecords\":[");
+
+    for (size_t i = 0; i < state->log_record_count; i++) {
+        if (i > 0) jb_char(&jb, ',');
+        write_log_record_json(&jb, &state->log_records[i]);
+    }
+
+    jb_str(&jb, "]}]}]}");
+
+    if (out_len) *out_len = jb.len;
+    return jb.buf;
+}
