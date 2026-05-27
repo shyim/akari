@@ -60,14 +60,25 @@ namespace {
     echo "header block: " . ($has_header ? 'yes' : 'no') . "\n";
     echo "content block: " . ($has_content ? 'yes' : 'no') . "\n";
 
-    // Check first render span has db.system=twig attribute
+    // Check render span carries template.engine + template.name attributes
     foreach ($spans as $span) {
         if ($span['name'] === 'twig.render blog/index.html.twig') {
             foreach ($span['attributes'] as $attr) {
-                if ($attr['key'] === 'db.system') echo "db.system: " . $attr['value']['stringValue'] . "\n";
-                if ($attr['key'] === 'db.statement') echo "db.statement: " . $attr['value']['stringValue'] . "\n";
+                if ($attr['key'] === 'template.engine') echo "template.engine: " . $attr['value']['stringValue'] . "\n";
+                if ($attr['key'] === 'template.name') echo "template.name: " . $attr['value']['stringValue'] . "\n";
             }
             break; /* only check first match */
+        }
+    }
+
+    // Check the header block span carries template.name + template.block_name
+    foreach ($spans as $span) {
+        if ($span['name'] === 'twig.block blog/index.html.twig::header') {
+            foreach ($span['attributes'] as $attr) {
+                if ($attr['key'] === 'template.name') echo "block template.name: " . $attr['value']['stringValue'] . "\n";
+                if ($attr['key'] === 'template.block_name') echo "template.block_name: " . $attr['value']['stringValue'] . "\n";
+            }
+            break;
         }
     }
 }
@@ -76,5 +87,7 @@ namespace {
 render span name: twig.render blog/index.html.twig
 header block: yes
 content block: yes
-db.system: twig
-db.statement: blog/index.html.twig
+template.engine: twig
+template.name: blog/index.html.twig
+block template.name: blog/index.html.twig
+template.block_name: header

@@ -54,12 +54,14 @@ static void write_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state, cons
     const profiler_db_attr_t *db = profiler_get_db_attr(state, (uint32_t)span_idx);
     const profiler_http_attr_t *http = profiler_get_http_attr(state, (uint32_t)span_idx);
     const profiler_messaging_attr_t *msg = profiler_get_messaging_attr(state, (uint32_t)span_idx);
+    const profiler_template_attr_t *tpl = profiler_get_template_attr(state, (uint32_t)span_idx);
     const profiler_exception_event_t *exc = profiler_get_exception_event(state, (uint32_t)span_idx);
 
     uint32_t field_count = 12;
     if (db) field_count += 4;
     if (http) field_count += 5;
     if (msg) field_count += 3 + (msg->has_link ? 2 : 0);
+    if (tpl) field_count += 3; /* tg (engine), tn (name), tb (block name) */
     if (exc) field_count += 3; /* et (exception type), em (exception message), ev (event timestamp) */
     msgpack_write_map(buf, field_count);
 
@@ -143,6 +145,15 @@ static void write_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state, cons
             msgpack_write_key(buf, "ls");
             msgpack_write_bin(buf, msg->linked_span_id, 16);
         }
+    }
+
+    if (tpl) {
+        msgpack_write_key(buf, "tg");
+        msgpack_write_str(buf, tpl->engine, strlen(tpl->engine));
+        msgpack_write_key(buf, "tn");
+        msgpack_write_str(buf, tpl->name, strlen(tpl->name));
+        msgpack_write_key(buf, "tb");
+        msgpack_write_str(buf, tpl->block_name, strlen(tpl->block_name));
     }
 
     if (exc) {

@@ -234,6 +234,29 @@ static void write_span_json(json_buf_t *jb, profiler_state_t *state, const profi
         }
     }
 
+    /* Template attributes (Twig spans) */
+    const profiler_template_attr_t *tpl = profiler_get_template_attr(state, span_idx);
+    if (tpl) {
+        if (tpl->engine[0]) {
+            jb_char(jb, ',');
+            jb_str(jb, "{\"key\":\"template.engine\",\"value\":{\"stringValue\":\"");
+            jb_json_escaped(jb, tpl->engine, strlen(tpl->engine));
+            jb_str(jb, "\"}}");
+        }
+        if (tpl->name[0]) {
+            jb_char(jb, ',');
+            jb_str(jb, "{\"key\":\"template.name\",\"value\":{\"stringValue\":\"");
+            jb_json_escaped(jb, tpl->name, strlen(tpl->name));
+            jb_str(jb, "\"}}");
+        }
+        if (tpl->block_name[0]) {
+            jb_char(jb, ',');
+            jb_str(jb, "{\"key\":\"template.block_name\",\"value\":{\"stringValue\":\"");
+            jb_json_escaped(jb, tpl->block_name, strlen(tpl->block_name));
+            jb_str(jb, "\"}}");
+        }
+    }
+
     jb_str(jb, "]");
 
     /* Span links (for consumer spans linked to producer traces) */

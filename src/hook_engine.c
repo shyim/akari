@@ -99,12 +99,18 @@ static zend_op_array *profiler_compile_file(zend_file_handle *file_handle, int t
                 span->has_parent = 1;
             }
 
-            /* Record filename as attribute */
+            /* Record filename as attribute. Twig compiles each template to a
+             * PHP class under a ".../twig/" cache directory; tag those as
+             * "twig" so template compilation is grouped apart from ordinary
+             * file compilation. The template name itself is not available yet
+             * (the class is not loaded until the file executes), so the cache
+             * path is the best label at this point. */
             if (file_handle && file_handle->filename) {
+                const char *fname = ZSTR_VAL(file_handle->filename);
+                const char *system = strstr(fname, "/twig/") ? "twig" : "compile";
                 profiler_db_attr_t *attr = engine_db_attr_alloc(state,
-                    (uint32_t)span_idx, "compile");
-                engine_db_attr_set_statement(attr,
-                    ZSTR_VAL(file_handle->filename),
+                    (uint32_t)span_idx, system);
+                engine_db_attr_set_statement(attr, fname,
                     ZSTR_LEN(file_handle->filename));
             }
 

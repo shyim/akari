@@ -1,5 +1,5 @@
 --TEST--
-Twig: long displayBlock names clamp db.statement to the local buffer
+Twig: long displayBlock names clamp template.block_name to the buffer
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
@@ -53,31 +53,29 @@ namespace {
     if (!$block_span) {
         echo "json valid: yes\n";
         echo "span name clamped: no\n";
-        echo "statement clamped: no\n";
-        echo "statement prefix: no\n";
+        echo "block clamped: no\n";
+        echo "template name: no\n";
         exit;
     }
 
-    $statement = null;
+    $block = null;
+    $tpl_name = null;
     foreach ($block_span['attributes'] as $attr) {
-        if ($attr['key'] === 'db.statement') {
-            $statement = $attr['value']['stringValue'];
-            break;
-        }
+        if ($attr['key'] === 'template.block_name') $block = $attr['value']['stringValue'];
+        if ($attr['key'] === 'template.name') $tpl_name = $attr['value']['stringValue'];
     }
 
     $name_len = strlen($block_span['name']);
-    $statement_len = $statement === null ? 0 : strlen($statement);
-    $prefix = 'long-template.html.twig::';
+    $block_len = $block === null ? 0 : strlen($block);
 
     echo "json valid: yes\n";
     echo "span name clamped: " . (($name_len > 0 && $name_len <= 255) ? 'yes' : 'no') . "\n";
-    echo "statement clamped: " . (($statement_len > 0 && $statement_len <= 511) ? 'yes' : 'no') . "\n";
-    echo "statement prefix: " . (($statement !== null && strncmp($statement, $prefix, strlen($prefix)) === 0) ? 'yes' : 'no') . "\n";
+    echo "block clamped: " . (($block_len > 0 && $block_len <= 127) ? 'yes' : 'no') . "\n";
+    echo "template name: " . ($tpl_name === 'long-template.html.twig' ? 'yes' : 'no') . "\n";
 }
 ?>
 --EXPECT--
 json valid: yes
 span name clamped: yes
-statement clamped: yes
-statement prefix: yes
+block clamped: yes
+template name: yes

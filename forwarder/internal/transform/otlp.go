@@ -56,6 +56,11 @@ type Span struct {
 	LinkedTraceID []byte `msgpack:"lt,omitempty"`
 	LinkedSpanID  []byte `msgpack:"ls,omitempty"`
 
+	// Template attrs (Twig spans)
+	TemplateEngine string `msgpack:"tg,omitempty"`
+	TemplateName   string `msgpack:"tn,omitempty"`
+	TemplateBlock  string `msgpack:"tb,omitempty"`
+
 	// Exception event (child spans)
 	ExceptionType    string `msgpack:"et,omitempty"`
 	ExceptionMessage string `msgpack:"em,omitempty"`
@@ -284,6 +289,17 @@ func Transform(data []byte) ([]byte, error) {
 		}
 		if s.MsgDest != "" {
 			attrs = append(attrs, otlpKeyValue{Key: "messaging.destination.name", Value: strVal(s.MsgDest)})
+		}
+
+		// Template attrs (Twig spans)
+		if s.TemplateEngine != "" {
+			attrs = append(attrs, otlpKeyValue{Key: "template.engine", Value: strVal(s.TemplateEngine)})
+		}
+		if s.TemplateName != "" {
+			attrs = append(attrs, otlpKeyValue{Key: "template.name", Value: strVal(s.TemplateName)})
+		}
+		if s.TemplateBlock != "" {
+			attrs = append(attrs, otlpKeyValue{Key: "template.block_name", Value: strVal(s.TemplateBlock)})
 		}
 
 		// Span links (consumer → producer trace context)

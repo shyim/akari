@@ -1,5 +1,5 @@
 --TEST--
-Twig: TemplateWrapper::render extracts template name
+Twig: TemplateWrapper is not hooked; only the inner compiled template is instrumented
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
@@ -51,18 +51,20 @@ namespace {
 
     $names = array_column($spans, 'name');
 
-    // TemplateWrapper::render should be named "twig.render page/show.html.twig"
-    $has_wrapper = in_array('twig.render page/show.html.twig', $names);
-    echo "wrapper span name: " . ($has_wrapper ? 'twig.render page/show.html.twig' : 'FAIL: ' . implode(', ', $names)) . "\n";
+    // The inner Twig\Template::render resolves its name from the compiled
+    // constant return in App\PageTemplate::getTemplateName().
+    $has_inner = in_array('twig.render page/show.html.twig', $names);
+    echo "inner render resolved: " . ($has_inner ? 'yes' : 'FAIL: ' . implode(', ', $names)) . "\n";
 
-    // Inner Template::render should also be named "twig.render page/show.html.twig"
-    $count = 0;
+    // TemplateWrapper is not instrumented, so the only render span is the inner
+    // one — the delegating wrapper does not add a redundant span.
+    $render_spans = 0;
     foreach ($names as $n) {
-        if ($n === 'twig.render page/show.html.twig') $count++;
+        if (str_starts_with($n, 'twig.render ')) $render_spans++;
     }
-    echo "render span count: $count\n";
+    echo "render span count: $render_spans\n";
 }
 ?>
 --EXPECT--
-wrapper span name: twig.render page/show.html.twig
-render span count: 2
+inner render resolved: yes
+render span count: 1

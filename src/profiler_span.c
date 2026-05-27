@@ -270,6 +270,17 @@ const profiler_messaging_attr_t *profiler_get_messaging_attr(profiler_state_t *s
     return NULL;
 }
 
+const profiler_template_attr_t *profiler_get_template_attr(profiler_state_t *state, uint32_t span_index)
+{
+    if (!state || !state->template_attrs) return NULL;
+    for (size_t i = 0; i < state->template_attr_count; i++) {
+        if (state->template_attrs[i].span_index == span_index) {
+            return &state->template_attrs[i];
+        }
+    }
+    return NULL;
+}
+
 const profiler_exception_event_t *profiler_get_exception_event(profiler_state_t *state, uint32_t span_index)
 {
     if (!state || !state->exception_events) return NULL;
@@ -342,6 +353,21 @@ void profiler_remove_msg_attrs(profiler_state_t *state, uint32_t span_index)
                         (state->msg_attr_count - i - 1) * sizeof(profiler_messaging_attr_t));
             }
             state->msg_attr_count--;
+            i--;
+        }
+    }
+}
+
+void profiler_remove_template_attrs(profiler_state_t *state, uint32_t span_index)
+{
+    if (!state || !state->template_attrs) return;
+    for (size_t i = 0; i < state->template_attr_count; i++) {
+        if (state->template_attrs[i].span_index == span_index) {
+            if (i + 1 < state->template_attr_count) {
+                memmove(&state->template_attrs[i], &state->template_attrs[i + 1],
+                        (state->template_attr_count - i - 1) * sizeof(profiler_template_attr_t));
+            }
+            state->template_attr_count--;
             i--;
         }
     }
@@ -548,6 +574,19 @@ void profiler_compact_exported_spans(profiler_state_t *state)
         }
     }
     state->msg_attr_count = write_idx;
+
+    write_idx = 0;
+    if (state->template_attrs) {
+        for (size_t i = 0; i < state->template_attr_count; i++) {
+            uint32_t new_index;
+            if (remap_span_index(state->template_attrs[i].span_index, remap, old_count, &new_index)) {
+                state->template_attrs[write_idx] = state->template_attrs[i];
+                state->template_attrs[write_idx].span_index = new_index;
+                write_idx++;
+            }
+        }
+    }
+    state->template_attr_count = write_idx;
 
     write_idx = 0;
     if (state->exception_events) {

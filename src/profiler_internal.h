@@ -67,6 +67,7 @@ void profiler_compact_exported_spans(profiler_state_t *state);
 void profiler_remove_db_attrs(profiler_state_t *state, uint32_t span_index);
 void profiler_remove_http_attrs(profiler_state_t *state, uint32_t span_index);
 void profiler_remove_msg_attrs(profiler_state_t *state, uint32_t span_index);
+void profiler_remove_template_attrs(profiler_state_t *state, uint32_t span_index);
 void profiler_remove_exception_events(profiler_state_t *state, uint32_t span_index);
 
 /* ── Caught-exception detection (defined in profiler_span.c) ──

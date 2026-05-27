@@ -114,6 +114,21 @@ typedef struct {
     int has_link;                        /* traceparent was found in consumed message */
 } profiler_messaging_attr_t;
 
+/* ── Template span attributes (Twig instrumentation) ── */
+
+#define TEMPLATE_ENGINE_MAX 16
+#define TEMPLATE_NAME_MAX   256
+#define TEMPLATE_BLOCK_MAX  128
+
+#define PROFILER_INITIAL_TEMPLATE_ATTRS 8
+
+typedef struct {
+    uint32_t span_index;                   /* index into span array */
+    char engine[TEMPLATE_ENGINE_MAX];      /* template.engine, e.g. "twig" */
+    char name[TEMPLATE_NAME_MAX];          /* template.name, e.g. "blog/index.html.twig" */
+    char block_name[TEMPLATE_BLOCK_MAX];   /* template.block_name (block renders only) */
+} profiler_template_attr_t;
+
 /* ── Exception event attributes ── */
 
 #define EXCEPTION_TYPE_MAX    256
@@ -223,6 +238,11 @@ typedef struct profiler_state_s {
     size_t msg_attr_count;
     size_t msg_attr_capacity;
 
+    /* Template attributes (for Twig spans) */
+    profiler_template_attr_t *template_attrs;
+    size_t template_attr_count;
+    size_t template_attr_capacity;
+
     /* Exception events (for error handler spans) */
     profiler_exception_event_t *exception_events;
     size_t exception_event_count;
@@ -287,6 +307,7 @@ int profiler_current_span_index(profiler_state_t *state, uint32_t *span_index);
 const profiler_db_attr_t *profiler_get_db_attr(profiler_state_t *state, uint32_t span_index);
 const profiler_http_attr_t *profiler_get_http_attr(profiler_state_t *state, uint32_t span_index);
 const profiler_messaging_attr_t *profiler_get_messaging_attr(profiler_state_t *state, uint32_t span_index);
+const profiler_template_attr_t *profiler_get_template_attr(profiler_state_t *state, uint32_t span_index);
 const profiler_exception_event_t *profiler_get_exception_event(profiler_state_t *state, uint32_t span_index);
 int profiler_span_has_pending_exception(profiler_state_t *state, uint32_t span_index);
 
