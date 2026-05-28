@@ -64,6 +64,10 @@ make -j$(nproc)
 make install
 ```
 
+> Add `--enable-akari-debug` to compile in the [debug introspection
+> functions](#debug-introspection-debug-builds-only) (`getSpansJson`, etc.).
+> This is for testing/debugging only — leave it off for production builds.
+
 #### 2. Build the forwarder
 
 ```bash
@@ -203,10 +207,9 @@ akari.trace_gc=1             ; flag slow GC cycles
 use function Akari\{
     enable, disable, createSpan,
     setTransactionName, getTransactionName, setServiceName,
-    addTag, getTags, removeTag, setCustomVariable,
+    addTag, removeTag, setCustomVariable,
     logException, log, generateDistributedTracingHeaders,
-    markAsWebTransaction, markAsCliTransaction,
-    isProfiling, getSpanCount, getSpansJson, getLogsJson
+    markAsWebTransaction, markAsCliTransaction
 };
 
 // Manual control
@@ -225,8 +228,20 @@ $headers = generateDistributedTracingHeaders();
 // → ['traceparent' => '00-abc123...-def456...-01']
 
 disable();
+```
 
-// Introspection
+### Debug introspection (debug builds only)
+
+These functions are compiled in **only** when the extension is built with
+`--enable-akari-debug`. They are used by the test suite and for local
+debugging, and are absent from production builds:
+
+```php
+use function Akari\{
+    isProfiling, getSpanCount, getFrameCount, getTags,
+    getSpansJson, getLogsJson
+};
+
 echo getSpanCount();    // number of spans this request
 echo getSpansJson();    // OTLP traces JSON for debugging
 echo getLogsJson();     // OTLP logs JSON for debugging

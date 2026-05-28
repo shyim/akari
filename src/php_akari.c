@@ -104,6 +104,7 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_disable, 0, 0, _IS_BOOL, 0)
 ZEND_END_ARG_INFO()
 
+#ifdef AKARI_DEBUG_INTROSPECTION
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_get_span_count, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
@@ -112,6 +113,7 @@ ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_get_spans_json, 0, 0, IS_STRING, 1)
 ZEND_END_ARG_INFO()
+#endif
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_set_transaction_name, 0, 1, IS_VOID, 0)
     ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
@@ -129,8 +131,10 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_add_tag, 0, 2, IS_VOID, 0)
     ZEND_ARG_TYPE_INFO(0, value, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
+#ifdef AKARI_DEBUG_INTROSPECTION
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_get_tags, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
+#endif
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_remove_tag, 0, 1, IS_VOID, 0)
     ZEND_ARG_TYPE_INFO(0, key, IS_STRING, 0)
@@ -155,8 +159,10 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_log, 0, 2, IS_VOID, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, context, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
+#ifdef AKARI_DEBUG_INTROSPECTION
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_get_logs_json, 0, 0, IS_STRING, 1)
 ZEND_END_ARG_INFO()
+#endif
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_distributed_headers, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
@@ -167,8 +173,10 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_mark_as_cli, 0, 0, IS_VOID, 0)
 ZEND_END_ARG_INFO()
 
+#ifdef AKARI_DEBUG_INTROSPECTION
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_is_profiling, 0, 0, _IS_BOOL, 0)
 ZEND_END_ARG_INFO()
+#endif
 
 /* Namespaced PHP functions */
 
@@ -207,6 +215,7 @@ ZEND_NAMED_FUNCTION(zf_akari_disable)
     RETURN_TRUE;
 }
 
+#ifdef AKARI_DEBUG_INTROSPECTION
 ZEND_NAMED_FUNCTION(zf_akari_get_span_count)
 {
     ZEND_PARSE_PARAMETERS_NONE();
@@ -244,6 +253,7 @@ ZEND_NAMED_FUNCTION(zf_akari_get_spans_json)
     free(json);
     RETURN_STR(result);
 }
+#endif /* AKARI_DEBUG_INTROSPECTION */
 
 /* ── Userland API: setTransactionName ── */
 
@@ -344,6 +354,7 @@ ZEND_NAMED_FUNCTION(zf_akari_add_tag)
 
 /* ── Userland API: getTags ── */
 
+#ifdef AKARI_DEBUG_INTROSPECTION
 ZEND_NAMED_FUNCTION(zf_akari_get_tags)
 {
     ZEND_PARSE_PARAMETERS_NONE();
@@ -356,6 +367,7 @@ ZEND_NAMED_FUNCTION(zf_akari_get_tags)
         }
     }
 }
+#endif /* AKARI_DEBUG_INTROSPECTION */
 
 /* ── Userland API: removeTag ── */
 
@@ -625,6 +637,7 @@ ZEND_NAMED_FUNCTION(zf_akari_log)
 
 /* ── Userland API: getLogsJson (introspection/testing) ── */
 
+#ifdef AKARI_DEBUG_INTROSPECTION
 ZEND_NAMED_FUNCTION(zf_akari_get_logs_json)
 {
     ZEND_PARSE_PARAMETERS_NONE();
@@ -644,6 +657,7 @@ ZEND_NAMED_FUNCTION(zf_akari_get_logs_json)
     free(json);
     RETURN_STR(result);
 }
+#endif /* AKARI_DEBUG_INTROSPECTION */
 
 /* ── Userland API: generateDistributedTracingHeaders ── */
 
@@ -706,35 +720,45 @@ ZEND_NAMED_FUNCTION(zf_akari_mark_as_cli)
 
 /* ── Userland API: isProfiling ── */
 
+#ifdef AKARI_DEBUG_INTROSPECTION
 ZEND_NAMED_FUNCTION(zf_akari_is_profiling)
 {
     ZEND_PARSE_PARAMETERS_NONE();
     profiler_state_t *state = profiler_get_state();
     RETURN_BOOL(state && state->active);
 }
+#endif /* AKARI_DEBUG_INTROSPECTION */
 
 static const zend_function_entry akari_functions[] = {
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "enable", zf_akari_enable, arginfo_enable, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "disable", zf_akari_disable, arginfo_disable, 0)
+#ifdef AKARI_DEBUG_INTROSPECTION
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "getSpanCount", zf_akari_get_span_count, arginfo_get_span_count, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "getFrameCount", zf_akari_get_frame_count, arginfo_get_frame_count, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "getSpansJson", zf_akari_get_spans_json, arginfo_get_spans_json, 0)
+#endif
     /* Userland API */
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "setTransactionName", zf_akari_set_transaction_name, arginfo_set_transaction_name, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "getTransactionName", zf_akari_get_transaction_name, arginfo_get_transaction_name, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "setServiceName", zf_akari_set_service_name, arginfo_set_service_name, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "addTag", zf_akari_add_tag, arginfo_add_tag, 0)
+#ifdef AKARI_DEBUG_INTROSPECTION
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "getTags", zf_akari_get_tags, arginfo_get_tags, 0)
+#endif
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "removeTag", zf_akari_remove_tag, arginfo_remove_tag, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "setCustomVariable", zf_akari_set_custom_variable, arginfo_set_custom_var, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "createSpan", zf_akari_create_span, arginfo_create_span, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "logException", zf_akari_log_exception, arginfo_log_exception, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "log", zf_akari_log, arginfo_log, 0)
+#ifdef AKARI_DEBUG_INTROSPECTION
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "getLogsJson", zf_akari_get_logs_json, arginfo_get_logs_json, 0)
+#endif
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "generateDistributedTracingHeaders", zf_akari_generate_distributed_headers, arginfo_distributed_headers, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "markAsWebTransaction", zf_akari_mark_as_web, arginfo_mark_as_web, 0)
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "markAsCliTransaction", zf_akari_mark_as_cli, arginfo_mark_as_cli, 0)
+#ifdef AKARI_DEBUG_INTROSPECTION
     ZEND_NS_RAW_FENTRY(PHP_AKARI_NS, "isProfiling", zf_akari_is_profiling, arginfo_is_profiling, 0)
+#endif
     PHP_FE_END
 };
 

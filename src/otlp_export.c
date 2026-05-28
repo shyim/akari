@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <unistd.h>
 
+#ifdef AKARI_DEBUG_INTROSPECTION
+
 /* ── JSON buffer ── */
 
 typedef struct {
@@ -535,3 +537,5 @@ char *otlp_serialize_logs(profiler_state_t *state, const char *service_name, siz
     if (out_len) *out_len = jb.len;
     return jb.buf;
 }
+
+#endif /* AKARI_DEBUG_INTROSPECTION */

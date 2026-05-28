@@ -53,7 +53,7 @@ jobs:
       - name: Build extension
         run: |
           phpize
-          ./configure --enable-akari
+          ./configure --enable-akari --enable-akari-debug
           make -j$(nproc)
 
       - name: Verify extension loads
@@ -112,7 +112,7 @@ jobs:
           export CPPFLAGS="-I$(brew --prefix curl)/include"
           export LDFLAGS="-L$(brew --prefix curl)/lib"
           phpize
-          ./configure --enable-akari
+          ./configure --enable-akari --enable-akari-debug
           make -j$(sysctl -n hw.ncpu)
 
       - name: Run tests
@@ -223,7 +223,7 @@ jobs:
       - name: Build extension
         run: |
           phpize
-          ./configure --enable-akari
+          ./configure --enable-akari --enable-akari-debug
           make -j$(nproc)
 
       - name: Run integration tests
