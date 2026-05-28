@@ -27,7 +27,7 @@ ZEND_DECLARE_MODULE_GLOBALS(akari)
 /* INI entries */
 PHP_INI_BEGIN()
     STD_PHP_INI_BOOLEAN("akari.enable", "0", PHP_INI_SYSTEM, OnUpdateBool, enable, zend_akari_globals, akari_globals)
-    STD_PHP_INI_ENTRY("akari.service_name", "php", PHP_INI_SYSTEM, OnUpdateString, service_name, zend_akari_globals, akari_globals)
+    STD_PHP_INI_ENTRY("akari.service_name", "", PHP_INI_SYSTEM, OnUpdateString, service_name, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.max_depth", "64", PHP_INI_SYSTEM, OnUpdateLong, max_depth, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.min_duration_ms", "0", PHP_INI_SYSTEM, OnUpdateReal, min_duration_ms, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.udp_host", "127.0.0.1", PHP_INI_SYSTEM, OnUpdateString, udp_host, zend_akari_globals, akari_globals)
@@ -54,7 +54,7 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->flush_threshold = PROFILER_FLUSH_THRESHOLD;
 }
 
-/* Resolve service name: request override → pending → INI default */
+/* Resolve service name: request override → pending → INI (if set) → OTEL_SERVICE_NAME env → "php" */
 static const char *get_service_name(profiler_state_t *state)
 {
     if (state && state->service_name_override[0]) {
@@ -63,7 +63,14 @@ static const char *get_service_name(profiler_state_t *state)
     if (AKARI_G(pending_service_name)[0]) {
         return AKARI_G(pending_service_name);
     }
-    return AKARI_G(service_name);
+    if (AKARI_G(service_name) && AKARI_G(service_name)[0]) {
+        return AKARI_G(service_name);
+    }
+    const char *env = getenv("OTEL_SERVICE_NAME");
+    if (env && env[0]) {
+        return env;
+    }
+    return "php";
 }
 
 /* Export: always UDP. Exports child spans AND finalized root span if present,
@@ -73,7 +80,6 @@ static void export_spans(profiler_state_t *state)
 {
     if (!state) return;
     const char *service_name = get_service_name(state);
-    if (!service_name) return;
 
     int has_root = (state->root.end_time_ns > 0 && !state->root.is_cli);
     if (state->span_count > 0 || has_root) {
@@ -223,7 +229,6 @@ ZEND_NAMED_FUNCTION(zf_akari_get_spans_json)
         RETURN_FALSE;
     }
     const char *service_name = get_service_name(state);
-    if (!service_name) service_name = "php";
 
     /* Drop exceptions the application already caught so introspection does not
      * report them as errors. */
@@ -628,7 +633,6 @@ ZEND_NAMED_FUNCTION(zf_akari_get_logs_json)
         RETURN_FALSE;
     }
     const char *service_name = get_service_name(state);
-    if (!service_name) service_name = "php";
 
     size_t json_len = 0;
     char *json = otlp_serialize_logs(state, service_name, &json_len);

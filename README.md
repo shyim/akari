@@ -164,7 +164,7 @@ Functions that can introduce latency are traced with configurable thresholds:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `akari.enable` | `0` | Enable tracing |
-| `akari.service_name` | `php` | OTel service name |
+| `akari.service_name` | _(empty)_ | OTel service name. When unset, falls back to the `OTEL_SERVICE_NAME` env var, then to `php` |
 | `akari.max_depth` | `64` | Max call stack depth (1–256, clamped) |
 | `akari.min_duration_ms` | `0` | Drop spans shorter than this (global threshold) |
 | `akari.udp_host` | `127.0.0.1` | Forwarder UDP host |
