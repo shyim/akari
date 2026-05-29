@@ -215,7 +215,17 @@ static void *curl_exec_pre(profiler_state_t *state, zend_execute_data *execute_d
     if (!ch) return NULL;
 
     curl_headers_init();
-    return inject_traceparent(ch, handle_arg, state, span);
+    struct curl_slist *injected = inject_traceparent(ch, handle_arg, state, span);
+
+    /* Take ownership of the injected list immediately, in the same per-handle
+     * slot used for restored lists. This is what makes us bailout-safe: if the
+     * call below triggers zend_bailout (fatal error, timeout, exit) the post
+     * hook never runs, but the list is still tracked and gets freed at request
+     * shutdown by curl_propagation_request_end() instead of leaking. On the
+     * normal path the post hook replaces this slot (freeing `injected`) with
+     * the restored user headers. */
+    set_restored_slist(handle_arg, injected);
+    return injected;
 }
 
 static void curl_exec_post(profiler_state_t *state, zend_execute_data *execute_data,
@@ -223,12 +233,15 @@ static void curl_exec_post(profiler_state_t *state, zend_execute_data *execute_d
                             uint32_t span_index, void *pre_data)
 {
     (void)return_value;
+    /* The injected list (pre_data) is owned by the per-handle slot in
+     * curl_restored_headers (registered in curl_exec_pre for bailout safety).
+     * We do NOT free it directly here — installing the restored list below via
+     * set_restored_slist() replaces the slot and frees the injected list as
+     * part of the replace, which avoids a double free. */
     struct curl_slist *injected = (struct curl_slist *)pre_data;
 
     /* Restore user headers */
     if (injected) {
-        curl_slist_free_all(injected);
-
         uint32_t num_args = ZEND_CALL_NUM_ARGS(execute_data);
         if (num_args >= 1) {
             zval *handle_arg = ZEND_CALL_ARG(execute_data, 1);
@@ -244,12 +257,13 @@ static void curl_exec_post(profiler_state_t *state, zend_execute_data *execute_d
                         }
                     } ZEND_HASH_FOREACH_END();
                     curl_easy_setopt(ch, CURLOPT_HTTPHEADER, restored);
-                    /* curl references this list until the next request; we own
-                     * it and free it on the next exec or at request shutdown. */
+                    /* Replaces the injected list in the slot (freeing it); curl
+                     * references `restored` until the next request, and we free
+                     * it on the next exec or at request shutdown. */
                     set_restored_slist(handle_arg, restored);
                 } else {
                     curl_easy_setopt(ch, CURLOPT_HTTPHEADER, NULL);
-                    /* Drop any list we previously owned for this handle. */
+                    /* Drop the injected list we owned for this handle. */
                     set_restored_slist(handle_arg, NULL);
                 }
             }
