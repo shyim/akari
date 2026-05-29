@@ -1,9 +1,12 @@
 #include "profiler_internal.h"
 #include "hook_registry.h"
 
-/* ── State ── */
-
-profiler_state_t *g_state = NULL;
+/* ── State ──
+ *
+ * The per-request profiler state lives in module globals as AKARI_G(state),
+ * aliased to `g_state` (see php_akari.h). Under ZTS that makes it per-thread,
+ * so concurrent requests on a threaded SAPI no longer share one buffer. There
+ * is no file-scope definition here anymore. */
 
 /* ── Registry initialization ── */
 
@@ -52,7 +55,12 @@ void profiler_minit(void)
     observer_register();
 }
 
-void profiler_mshutdown(void)
+/* Free the calling thread's profiler state and its buffers. The state lives in
+ * module globals (per-thread under ZTS) and outlives individual requests
+ * (profiler_rshutdown only resets it), so it must be freed at thread teardown —
+ * PHP_GSHUTDOWN — for every thread, not just MSHUTDOWN on the main thread.
+ * Idempotent; safe to call when no state was ever allocated. */
+void profiler_free_state(void)
 {
     if (g_state) {
         free(g_state->frames);
@@ -66,6 +74,19 @@ void profiler_mshutdown(void)
         free(g_state);
         g_state = NULL;
     }
+}
+
+void profiler_mshutdown(void)
+{
+#ifndef ZTS
+    /* NTS: there is no PHP_GSHUTDOWN per-thread teardown, so free the single
+     * process state here. Under ZTS the state is per-thread and freed in
+     * PHP_GSHUTDOWN for every thread (including the main one); doing it here too
+     * would risk touching TSRM storage during module teardown. */
+    profiler_free_state();
+#endif
+    /* The hook registry is a single process-global built once at MINIT — tear
+     * it down once, here at module shutdown, not per thread. */
     hook_registry_destroy(&g_hook_registry);
     registry_initialized = 0;
 }
@@ -112,7 +133,12 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms)
     g_state->flush_threshold = PROFILER_FLUSH_THRESHOLD;
     profiler_generate_hex_id(g_state, g_state->trace_id, 32);
 
-    /* Reset resolved class entries in the registry (invalidated between requests) */
+    /* Reset the per-thread resolved-class-entry cache (CEs are per-request and
+     * per-thread). Allocate it lazily on first use for this thread. */
+    if (!AKARI_G(ce_cache)) {
+        AKARI_G(ce_cache) = calloc(1, sizeof(hook_ce_cache_t));
+    }
+    hook_ce_cache_reset(AKARI_G(ce_cache));
     hook_registry_reset(&g_hook_registry);
 
     /* Initialize root HTTP span (may override trace_id from traceparent) */

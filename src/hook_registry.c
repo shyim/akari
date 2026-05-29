@@ -52,15 +52,17 @@ void hook_registry_init(hook_registry_t *reg)
 
 void hook_registry_reset(hook_registry_t *reg)
 {
-    /* Clear resolved class entries (they become invalid between requests) */
-    for (int i = 0; i < reg->count; i++) {
-        reg->entries[i].resolved_ce = NULL;
-        reg->entries[i].resolve_attempted = 0;
-    }
-    for (int i = 0; i < reg->wildcard_count; i++) {
-        reg->wildcards[i].resolved_ce = NULL;
-        reg->wildcards[i].resolve_attempted = 0;
-    }
+    /* The registry itself is immutable after MINIT (shared read-only across
+     * threads). The per-request resolved-CE cache is cleared separately, per
+     * thread, via hook_ce_cache_reset(). Nothing to do here. */
+    (void)reg;
+}
+
+void hook_ce_cache_reset(hook_ce_cache_t *cache)
+{
+    /* Class entries are per-request and per-thread — clear the memoized
+     * lookups so the new request re-resolves against its own class table. */
+    if (cache) memset(cache, 0, sizeof(*cache));
 }
 
 void hook_registry_destroy(hook_registry_t *reg)
@@ -233,31 +235,36 @@ void hook_register_side_effect(hook_registry_t *reg,
     reg->side_count++;
 }
 
-/* ── Resolve class entry lazily ── */
-
-static void resolve_class_entry(hook_entry_t *e)
+/* ── Resolve class entry lazily (per-thread cache) ──
+ * slot_ce/slot_attempted point at the cache entry for this hook (exact or
+ * wildcard array). Returns the resolved CE (possibly NULL). */
+static zend_class_entry *resolve_class_entry(const hook_entry_t *e,
+                                             zend_class_entry **slot_ce,
+                                             uint8_t *slot_attempted)
 {
-    if (e->resolve_attempted) return;
-    e->resolve_attempted = 1;
+    if (*slot_attempted) return *slot_ce;
+    *slot_attempted = 1;
 
-    if (e->class_name_len == 0) return;
+    if (e->class_name_len == 0) { *slot_ce = NULL; return NULL; }
 
     zend_string *name = zend_string_init(e->class_name, e->class_name_len, 0);
-    e->resolved_ce = zend_lookup_class(name);
+    *slot_ce = zend_lookup_class(name);
     zend_string_release(name);
+    return *slot_ce;
 }
 
 /* ── Class match helper ── */
 
-static int class_matches(hook_entry_t *e, zend_class_entry *ce)
+static int class_matches(const hook_entry_t *e, zend_class_entry *ce,
+                         zend_class_entry **slot_ce, uint8_t *slot_attempted)
 {
-    resolve_class_entry(e);
-    if (!e->resolved_ce) return 0;
+    zend_class_entry *resolved = resolve_class_entry(e, slot_ce, slot_attempted);
+    if (!resolved) return 0;
 
     if (e->use_instanceof) {
-        return (ce == e->resolved_ce || instanceof_function(ce, e->resolved_ce));
+        return (ce == resolved || instanceof_function(ce, resolved));
     }
-    return (ce == e->resolved_ce);
+    return (ce == resolved);
 }
 
 /* ── O(1) Lookup ── */
@@ -294,10 +301,20 @@ static int build_lookup_key(char *buf, size_t buf_size,
 }
 
 hook_entry_t *hook_registry_find(hook_registry_t *reg,
+                                  hook_ce_cache_t *cache,
                                   zend_execute_data *execute_data,
                                   int hook_type_filter)
 {
     if (!execute_data || !execute_data->func) return NULL;
+
+    /* Tolerate a missing cache (e.g. its allocation failed in profiler_rinit):
+     * fall back to a transient zero-initialized cache on the stack so this call
+     * resolves uncached rather than dereferencing NULL. */
+    hook_ce_cache_t scratch;
+    if (!cache) {
+        memset(&scratch, 0, sizeof(scratch));
+        cache = &scratch;
+    }
 
     zend_function *func = execute_data->func;
     if (!func->common.function_name) return NULL;
@@ -327,7 +344,9 @@ hook_entry_t *hook_registry_find(hook_registry_t *reg,
     if (result) {
         /* For instanceof hooks, verify the actual class matches */
         if (result->use_instanceof && result->class_name_len > 0 && has_scope) {
-            if (!class_matches(result, func->common.scope)) {
+            int slot = (int)(result - reg->entries);   /* index into exact cache */
+            if (!class_matches(result, func->common.scope,
+                               &cache->exact_ce[slot], &cache->exact_attempted[slot])) {
                 result = NULL;
             }
         }
@@ -373,7 +392,8 @@ hook_entry_t *hook_registry_find(hook_registry_t *reg,
         for (int i = 0; i < reg->wildcard_count; i++) {
             hook_entry_t *e = &reg->wildcards[i];
             if (e->hook_type != hook_type_filter) continue;
-            if (!class_matches(e, func->common.scope)) continue;
+            if (!class_matches(e, func->common.scope,
+                               &cache->wildcard_ce[i], &cache->wildcard_attempted[i])) continue;
             if (e->method_filter && !e->method_filter(fname)) continue;
             return e;
         }

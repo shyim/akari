@@ -2,14 +2,16 @@
 #include "hook_registry.h"
 #include "ext/pdo/php_pdo_driver.h"
 
-/* ── PDO detection ── */
-
-static zend_class_entry *otel_pdo_dbh_ce = NULL;
-static zend_class_entry *otel_pdo_stmt_ce = NULL;
+/* ── PDO detection ──
+ * The resolved PDO / PDOStatement class entries live in module globals so they
+ * are per-thread under ZTS (a zend_class_entry* resolved on one thread is not
+ * valid on another). Aliased to the original names to keep the body unchanged. */
+#define otel_pdo_dbh_ce   AKARI_G(pdo_dbh_ce)
+#define otel_pdo_stmt_ce  AKARI_G(pdo_stmt_ce)
 
 void profiler_resolve_pdo_classes(void)
 {
-    if (otel_pdo_dbh_ce) return;
+    if (otel_pdo_dbh_ce) return;   /* per-thread: resolved once for this thread */
     zend_string *name;
 
     name = zend_string_init("PDO", 3, 0);

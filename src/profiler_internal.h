@@ -11,6 +11,9 @@
 #include "Zend/zend_execute.h"
 #include "Zend/zend_exceptions.h"
 #include "profiler.h"
+/* After profiler.h so profiler_state_t is fully defined; provides AKARI_G and
+ * the g_state alias (module-global, per-thread under ZTS) to all hook files. */
+#include "../include/php_akari.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -27,9 +30,10 @@ static inline size_t profiler_clamp_snprintf_len(int n, size_t buf_size)
 /* Forward declaration */
 struct hook_registry_t_tag;
 
-/* ── Shared state (defined in profiler.c) ── */
-
-extern profiler_state_t *g_state;
+/* ── Shared state ──
+ * The per-request profiler state is module-global storage, reached as
+ * AKARI_G(state) / the g_state alias (defined in php_akari.h, included above).
+ * Per-thread under ZTS — no file-scope extern here. */
 
 /* ── Observer API (defined in observer.c) ── */
 

@@ -170,7 +170,7 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
 
     /* Determine hook type and look up registered hook */
     int hook_type = is_userland ? HOOK_TYPE_USERLAND : HOOK_TYPE_INTERNAL;
-    hook_entry_t *hook = hook_registry_find(&g_hook_registry, execute_data, hook_type);
+    hook_entry_t *hook = hook_registry_find(&g_hook_registry, AKARI_G(ce_cache), execute_data, hook_type);
 
 
     /* Filtering: only registered hooks produce spans. Unregistered calls
@@ -266,7 +266,7 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
 
     int is_userland = (func->type == ZEND_USER_FUNCTION || func->type == ZEND_EVAL_CODE);
     int hook_type = is_userland ? HOOK_TYPE_USERLAND : HOOK_TYPE_INTERNAL;
-    hook_entry_t *hook = hook_registry_find(&g_hook_registry, execute_data, hook_type);
+    hook_entry_t *hook = hook_registry_find(&g_hook_registry, AKARI_G(ce_cache), execute_data, hook_type);
 
     /* Per-hook threshold check */
     if (hook && hook->min_duration_ns > 0) {

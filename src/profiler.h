@@ -335,6 +335,9 @@ typedef struct profiler_state_s {
 
 void profiler_minit(void);
 void profiler_mshutdown(void);
+/* Free the calling thread's profiler state; call from PHP_GSHUTDOWN so every
+ * thread's state is reclaimed under ZTS, not just the main thread at MSHUTDOWN. */
+void profiler_free_state(void);
 void profiler_rinit(uint32_t max_depth, double min_duration_ms);
 void profiler_rshutdown(void);
 

@@ -73,9 +73,11 @@ typedef struct {
     int class_name_len;
     int method_name_len;
 
-    /* Resolved class entry (cached after first lookup) */
-    zend_class_entry *resolved_ce;
-    int resolve_attempted;
+    /* Class-entry resolution is cached PER THREAD, not here: a zend_class_entry
+     * resolved on one thread is not valid on another under ZTS, and the cache
+     * is reset every request. The cache lives in hook_ce_cache_t (module
+     * globals); this struct holds only immutable, MINIT-time configuration so
+     * the registry itself can be shared read-only across threads. */
     int use_instanceof;       /* 1 = match subclasses via instanceof_function */
 
     /* Hook type */
@@ -128,6 +130,23 @@ typedef struct {
     HashTable *hook_map;
     HashTable *side_map;
 } hook_registry_t;
+
+/* ── Per-thread, per-request resolved-class-entry cache ──
+ *
+ * Memoizes zend_lookup_class()/instanceof results for the registry's exact and
+ * wildcard entries, indexed by their position in the shared registry. Lives in
+ * module globals (per-thread under ZTS) and is cleared each request via
+ * hook_ce_cache_reset(), since class entries are per-request and per-thread. */
+/* Struct tag matches the forward declaration in php_akari.h
+ * (struct hook_ce_cache_t_fwd) so the module-global pointer is the same type. */
+typedef struct hook_ce_cache_t_fwd {
+    zend_class_entry *exact_ce[HOOK_REGISTRY_MAX];
+    uint8_t           exact_attempted[HOOK_REGISTRY_MAX];
+    zend_class_entry *wildcard_ce[HOOK_WILDCARD_MAX];
+    uint8_t           wildcard_attempted[HOOK_WILDCARD_MAX];
+} hook_ce_cache_t;
+
+void hook_ce_cache_reset(hook_ce_cache_t *cache);
 
 /* ── API ── */
 
@@ -197,6 +216,7 @@ void hook_register_side_effect(hook_registry_t *reg,
  * hook_type_filter: HOOK_TYPE_INTERNAL or HOOK_TYPE_USERLAND
  */
 hook_entry_t *hook_registry_find(hook_registry_t *reg,
+                                  hook_ce_cache_t *cache,
                                   zend_execute_data *execute_data,
                                   int hook_type_filter);
 

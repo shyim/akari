@@ -16,9 +16,9 @@
  * This mirrors the request-scoped object map used in hook_curl.c.
  */
 
-/* ── Request-scoped map: SQLite3Stmt object handle → prepared SQL ── */
-
-static HashTable *sqlite3_stmt_sql = NULL;
+/* ── Request-scoped map: SQLite3Stmt object handle → prepared SQL ──
+ * Stored in module globals so it is per-thread under ZTS. */
+#define sqlite3_stmt_sql  AKARI_G(sqlite3_stmt_sql)
 
 static void sqlite3_map_init(void)
 {

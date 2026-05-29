@@ -6,23 +6,9 @@
 #include "udp_export.h"
 #include "Zend/zend_exceptions.h"
 
-/* Module globals */
-ZEND_BEGIN_MODULE_GLOBALS(akari)
-    zend_bool enable;
-    char *service_name;
-    char pending_service_name[ROOT_ATTR_MAX];
-    zend_long max_depth;
-    double min_duration_ms;
-    char *udp_host;
-    zend_long udp_port;
-    zend_bool trace_compile;
-    zend_bool trace_gc;
-    zend_long flush_threshold;
-ZEND_END_MODULE_GLOBALS(akari)
-
+/* Module globals are declared in php_akari.h (so every TU can reach AKARI_G).
+ * This is their single storage definition. */
 ZEND_DECLARE_MODULE_GLOBALS(akari)
-
-#define AKARI_G(v) ZEND_MODULE_GLOBALS_ACCESSOR(akari, v)
 
 /* INI entries */
 PHP_INI_BEGIN()
@@ -52,6 +38,35 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->trace_compile = 0;
     akari_globals->trace_gc = 0;
     akari_globals->flush_threshold = PROFILER_FLUSH_THRESHOLD;
+    /* Per-request/per-thread pointers: created lazily during a request, must
+     * start NULL so the lazy-init checks fire and so a thread that never
+     * profiles leaves them NULL for shutdown to skip. */
+    akari_globals->state = NULL;
+    akari_globals->curl_user_headers = NULL;
+    akari_globals->curl_restored_headers = NULL;
+    akari_globals->sqlite3_stmt_sql = NULL;
+    akari_globals->ce_cache = NULL;
+    akari_globals->pdo_dbh_ce = NULL;
+    akari_globals->pdo_stmt_ce = NULL;
+    akari_globals->curl_ce = NULL;
+    akari_globals->curl_ce_resolved = 0;
+}
+
+static PHP_GSHUTDOWN_FUNCTION(akari)
+{
+    /* Thread teardown. Two per-thread allocations outlive individual requests
+     * (profiler_rshutdown only resets them, it does not free), so they must be
+     * reclaimed here for EVERY thread under ZTS — not just the main thread at
+     * MSHUTDOWN, which would leak worker-thread state:
+     *   - the profiler state (state/frames/spans/attr buffers)
+     *   - the resolved-class-entry cache
+     * The per-request curl/sqlite tables are already freed at each RSHUTDOWN,
+     * so they are NULL by now. */
+    profiler_free_state();
+    if (akari_globals->ce_cache) {
+        free(akari_globals->ce_cache);
+        akari_globals->ce_cache = NULL;
+    }
 }
 
 /* Resolve service name: request override → pending → INI (if set) → OTEL_SERVICE_NAME env → "php" */
@@ -900,7 +915,7 @@ zend_module_entry akari_module_entry = {
     PHP_AKARI_VERSION,
     PHP_MODULE_GLOBALS(akari),
     PHP_GINIT(akari),
-    NULL,
+    PHP_GSHUTDOWN(akari),
     NULL,
     STANDARD_MODULE_PROPERTIES_EX
 };

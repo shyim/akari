@@ -3,20 +3,18 @@
 
 #include <curl/curl.h>
 
-/* ── curl class resolution (lazy — curl may be a shared extension) ── */
-
-static zend_class_entry *otel_curl_ce = NULL;
-static int otel_curl_ce_resolved = 0;
-
+/* ── curl class resolution (lazy — curl may be a shared extension) ──
+ * The resolved CurlHandle class entry lives in module globals (per-thread under
+ * ZTS); curl_ce_resolved gates the one-time lookup for this thread. */
 static zend_class_entry *get_curl_ce(void)
 {
-    if (!otel_curl_ce_resolved) {
-        otel_curl_ce_resolved = 1;
+    if (!AKARI_G(curl_ce_resolved)) {
+        AKARI_G(curl_ce_resolved) = 1;
         zend_string *name = zend_string_init("CurlHandle", 10, 0);
-        otel_curl_ce = zend_lookup_class(name);
+        AKARI_G(curl_ce) = zend_lookup_class(name);
         zend_string_release(name);
     }
-    return otel_curl_ce;
+    return AKARI_G(curl_ce);
 }
 
 /* ── curl handle access ── */
@@ -40,7 +38,10 @@ static inline CURL *get_curl_handle_from_zval(zval *zv)
  * Populated by curl_setopt side-effect, consumed by inject_traceparent().
  */
 
-static HashTable *curl_user_headers = NULL;
+/* Per-request header tracking lives in module globals so it is per-thread
+ * under ZTS (concurrent requests no longer share one table). Aliased here to
+ * the original names to keep the body unchanged. */
+#define curl_user_headers      AKARI_G(curl_user_headers)
 
 /* ── Restored-header slist ownership ──
  *
@@ -51,7 +52,7 @@ static HashTable *curl_user_headers = NULL;
  * same handle frees the previous list before installing a fresh one, and any
  * still-installed lists are freed at request shutdown. Keyed by zend_object*.
  */
-static HashTable *curl_restored_headers = NULL;
+#define curl_restored_headers  AKARI_G(curl_restored_headers)
 
 static void free_restored_slist(zval *zv)
 {
@@ -73,25 +74,28 @@ static void curl_headers_init(void)
 
 static void curl_headers_shutdown(void)
 {
+    /* Intentionally frees nothing. This runs on the profiler-disable path
+     * (Akari\disable()) too, where the request continues and may re-enable:
+     *  - Freeing curl_user_headers here and re-allocating on the next enable
+     *    leaks the table when disable→enable happens within one request.
+     *  - Freeing curl_restored_headers here would dangle: the user's CurlHandle
+     *    objects are still alive with those slists installed via
+     *    CURLOPT_HTTPHEADER (curl does not copy them), so a later curl_exec($ch)
+     *    while disabled would dereference freed memory.
+     * Both tables are per-request and are torn down once at engine RSHUTDOWN by
+     * curl_propagation_request_end(), after PHP has destroyed the request's
+     * objects so no handle can reference the slists. */
+}
+
+/* Free both per-request header tables. Only safe at engine RSHUTDOWN, after the
+ * request's CurlHandle objects have been destroyed. */
+static void curl_headers_free_all(void)
+{
     if (curl_user_headers) {
         zend_hash_destroy(curl_user_headers);
         FREE_HASHTABLE(curl_user_headers);
         curl_user_headers = NULL;
     }
-    /* NOTE: curl_restored_headers is intentionally NOT freed here. This runs on
-     * the profiler-disable path too (Akari\disable() mid-request), where the
-     * user's CurlHandle objects are still alive and may be reused. The restored
-     * slists are still installed on those handles via CURLOPT_HTTPHEADER, and
-     * curl does not copy them — freeing now would leave a dangling pointer that
-     * a later curl_exec($ch) would dereference. We free them only at true
-     * request shutdown via curl_restored_headers_free(), by which point PHP has
-     * destroyed the request's objects so no handle can reference them. */
-}
-
-/* Free the owned restored slists. Only safe at engine RSHUTDOWN, after the
- * request's CurlHandle objects have been destroyed. */
-static void curl_restored_headers_free(void)
-{
     if (curl_restored_headers) {
         zend_hash_destroy(curl_restored_headers);
         FREE_HASHTABLE(curl_restored_headers);
@@ -337,12 +341,12 @@ void curl_propagation_rshutdown(void)
 }
 
 /* Called only from PHP_RSHUTDOWN, after the request's CurlHandle objects are
- * gone. Frees the restored slists we still own. Kept separate from
+ * gone. Frees both per-request header tables. Kept separate from
  * curl_propagation_rshutdown() because that path also runs on Akari\disable(),
  * where handles are still live (see curl_headers_shutdown). */
 void curl_propagation_request_end(void)
 {
-    curl_restored_headers_free();
+    curl_headers_free_all();
 }
 
 /* ── curl_multi_exec hook ── */
