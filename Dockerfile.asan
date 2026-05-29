@@ -1,0 +1,125 @@
+# ASan/UBSan build environment for the akari PHP extension.
+#
+# Builds PHP from source as a debug + ZTS build instrumented with
+# AddressSanitizer and UndefinedBehaviorSanitizer, then compiles the
+# extension against it. The same image is used locally and in CI:
+#
+#   docker build -f Dockerfile.asan -t akari-asan .
+#   docker run --rm akari-asan            # build ext + run test suite under ASan
+#
+# A debug+ZTS PHP is deliberate: debug PHP adds ZEND_ASSERTs on zval
+# refcounts and the GC, and ZTS surfaces thread-unsafe global access —
+# both catch bug classes a release NTS build silently tolerates.
+
+FROM ubuntu:24.04 AS php-build
+
+ARG PHP_VERSION=8.4.7
+ARG DEBIAN_FRONTEND=noninteractive
+
+# clang gives the best sanitizer diagnostics; libclang-rt-18-dev ships the
+# compiler-rt ASan/UBSan runtime libs clang links against (the -18 version is
+# tied to Ubuntu 24.04's default clang — bump both together on a base change).
+# bison/re2c build PHP's parser from the tarball; libxml2 is a core dependency.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl xz-utils \
+        clang libclang-rt-18-dev llvm make autoconf pkg-config bison re2c \
+        libxml2-dev libssl-dev libsqlite3-dev libcurl4-openssl-dev \
+        zlib1g-dev libonig-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# -fno-sanitize=function: PHP core stores and calls ctors/dtors/handlers
+# through generic function pointers (e.g. void(*)(void*)), which is sound in
+# practice but trips UBSan's function-type-mismatch check inside PHP's own
+# TSRM/Zend code. Left enabled it poisons every ASan-linked binary — including
+# configure's "can we run a compiled program?" probe, which aborts and makes
+# configure conclude "cannot run C compiled programs". Disabling the function
+# check (not all of UBSan) keeps the genuinely useful checks while ignoring
+# PHP's intentional indirect-call idiom. We also do NOT pass
+# -fno-sanitize-recover here: a UBSan finding should report, not hard-abort the
+# process, so a single benign hit can't take down the whole test run.
+ENV CC=clang \
+    CXX=clang++ \
+    SANITIZE_FLAGS="-fsanitize=address,undefined -fno-sanitize=function -fno-omit-frame-pointer -g -O1"
+
+# Build PHP itself under the sanitizers. The extension is loaded into this
+# interpreter, so PHP must be instrumented too for ASan to see across the
+# boundary into Zend's allocator and zval handling.
+RUN curl -fsSL "https://www.php.net/distributions/php-${PHP_VERSION}.tar.xz" -o /tmp/php.tar.xz \
+    && mkdir -p /usr/src/php \
+    && tar -xf /tmp/php.tar.xz -C /usr/src/php --strip-components=1 \
+    && rm /tmp/php.tar.xz
+
+WORKDIR /usr/src/php
+RUN CFLAGS="$SANITIZE_FLAGS" \
+    CXXFLAGS="$SANITIZE_FLAGS" \
+    LDFLAGS="-fsanitize=address,undefined -fno-sanitize=function" \
+    ./configure \
+        --prefix=/opt/php \
+        --enable-debug \
+        --enable-zts \
+        --disable-cgi \
+        --disable-phpdbg \
+        --without-pear \
+        --enable-mbstring \
+        --enable-pdo \
+        --with-pdo-sqlite \
+        --with-sqlite3 \
+        --with-curl \
+        --with-openssl \
+        --enable-session \
+    && make -j"$(nproc)" \
+    && make install
+
+ENV PATH="/opt/php/bin:${PATH}"
+
+# ---------------------------------------------------------------------------
+
+FROM php-build AS extension
+
+WORKDIR /opt/akari
+COPY . /opt/akari
+
+# Build the extension with the same sanitizer flags as PHP. --enable-akari-debug
+# exposes the introspection functions (getSpansJson etc.) the .phpt suite needs.
+#
+# ASAN_OPTIONS is set build-safe for the WHOLE step (phpize included): both
+# phpize and configure invoke the ASan-instrumented `php`/conftest binaries, and
+# under an abort-on-error policy any benign sanitizer hit at process startup
+# kills them — configure then reports "cannot run C compiled programs". We keep
+# the abort-y runtime policy out of the build by setting the runtime ENV block
+# only AFTER this RUN, so it attaches to the final image (docker run) but not to
+# the build steps. detect_leaks=0 here also sidesteps LSan needing ptrace, which
+# the BuildKit sandbox denies.
+RUN ASAN_OPTIONS="detect_leaks=0:abort_on_error=0:halt_on_error=0" \
+    UBSAN_OPTIONS="halt_on_error=0" \
+    sh -c 'phpize \
+      && CFLAGS="$SANITIZE_FLAGS" \
+         LDFLAGS="-fsanitize=address,undefined -fno-sanitize=function" \
+         ./configure --enable-akari --enable-akari-debug \
+      && make -j"$(nproc)"'
+
+# Sanitizer runtime knobs, applied to every `docker run` (NOT to the build above):
+#  - USE_ZEND_ALLOC=0 routes allocations through libc malloc so ASan can track
+#    them; otherwise Zend's mmap'd arena hides use-after-free / overflow.
+#  - ZEND_DONT_UNLOAD_MODULES=1 keeps the .so mapped so stack traces resolve.
+#  - *SAN_SYMBOLIZER_PATH points at llvm-symbolizer so traces show file:line
+#    instead of raw offsets.
+#  - detect_leaks=1 turns on LeakSanitizer (LSan triggers on PHP-internal
+#    one-time allocations we don't own).
+#  - LSan leak suppressions are loaded via LSAN_OPTIONS=suppressions=..., NOT
+#    via an ASAN_OPTIONS key — there is no "lsan_suppressions" ASan flag, so
+#    putting it in ASAN_OPTIONS silently does nothing.
+#  - halt_on_error=1 on ASan so a memory hit fails the run with a nonzero exit.
+#  - UBSan runs in report-but-continue mode (no halt_on_error). PHP's
+#    intentional generic-pointer dispatch is handled at compile time by
+#    -fno-sanitize=function (see SANITIZE_FLAGS), so no suppression file is
+#    needed; a real UBSan hit in akari code still surfaces in the log.
+ENV USE_ZEND_ALLOC=0 \
+    ZEND_DONT_UNLOAD_MODULES=1 \
+    ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-18 \
+    UBSAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-18 \
+    ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:detect_stack_use_after_return=1:strict_string_checks=1" \
+    LSAN_OPTIONS="suppressions=/opt/akari/.asan/lsan.supp" \
+    UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=0"
+
+ENTRYPOINT ["/opt/akari/.asan/run-tests.sh"]

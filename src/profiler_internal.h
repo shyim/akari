@@ -98,6 +98,8 @@ void profiler_resolve_pdo_classes(void);
 
 void curl_propagation_rinit(void);
 void curl_propagation_rshutdown(void);
+/* Free restored-header slists; safe only at engine RSHUTDOWN (handles gone). */
+void curl_propagation_request_end(void);
 
 /* ── Hook registration functions (each defined in their hook_*.c file) ── */
 /* Include hook_registry.h to get the hook_registry_t type */

@@ -245,3 +245,31 @@ jobs:
           echo ""
           echo "=== Test result summary ==="
           cat tests/*.log 2>/dev/null | grep -E 'FAIL|PASS' | head -20
+
+  asan:
+    runs-on: ubuntu-latest
+    name: ASan / UBSan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the sanitizer image. The PHP-from-source stage is the slow part
+      # (~several minutes); GHA layer caching keeps it warm across runs so it
+      # only rebuilds when Dockerfile.asan or the PHP_VERSION arg changes.
+      - name: Build ASan image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.asan
+          load: true
+          tags: akari-asan:ci
+          cache-from: type=gha,scope=asan
+          cache-to: type=gha,scope=asan,mode=max
+
+      # The container entrypoint builds the extension under ASan/UBSan and runs
+      # the .phpt suite; a sanitizer hit aborts with a nonzero exit and fails
+      # the job. Integration-only tests self-skip (no redis/mysql here).
+      - name: Run test suite under sanitizers
+        run: docker run --rm akari-asan:ci

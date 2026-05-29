@@ -111,7 +111,10 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_get_frame_count, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_get_spans_json, 0, 0, IS_STRING, 1)
+/* Returns the JSON string, or false when there is nothing to serialize — so
+ * the declared type is string|false, not ?string (returning false from a
+ * ?string function is a TypeError, caught by the debug build's return check). */
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_get_spans_json, 0, 0, MAY_BE_STRING|MAY_BE_FALSE)
 ZEND_END_ARG_INFO()
 #endif
 
@@ -160,7 +163,8 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_log, 0, 2, IS_VOID, 0)
 ZEND_END_ARG_INFO()
 
 #ifdef AKARI_DEBUG_INTROSPECTION
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_get_logs_json, 0, 0, IS_STRING, 1)
+/* string|false — see arginfo_get_spans_json. */
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_get_logs_json, 0, 0, MAY_BE_STRING|MAY_BE_FALSE)
 ZEND_END_ARG_INFO()
 #endif
 
@@ -820,6 +824,11 @@ PHP_RSHUTDOWN_FUNCTION(akari)
             profiler_rshutdown();
         }
     }
+    /* Free curl restored-header slists now that the request's CurlHandle
+     * objects have been destroyed. Deferred to here (not profiler_rshutdown)
+     * because Akari\disable() shares that path while handles are still live. */
+    curl_propagation_request_end();
+
     /* Always clear pending service name to prevent leaking across requests
      * (e.g. in PHP-FPM workers where setServiceName() was called without enable()). */
     AKARI_G(pending_service_name)[0] = '\0';

@@ -1,0 +1,17 @@
+# LeakSanitizer suppressions for the akari ASan test runs.
+#
+# These suppress leaks that originate in PHP/Zend internals or third-party
+# libraries we link against, not in akari's own code. Keep this list tight:
+# only add an entry when you've confirmed the allocation is not owned by us.
+# A leak whose top akari-owned frame appears in the stack must NOT be
+# suppressed here — fix it instead.
+
+# PHP keeps interned strings and one-time module globals for the life of the
+# process; LSan reports them at shutdown as "still reachable".
+leak:zend_interned_strings_init
+leak:zend_string_init_interned
+leak:php_module_startup
+
+# OpenSSL / libcurl one-time global init allocations.
+leak:CRYPTO_zalloc
+leak:curl_global_init

@@ -42,11 +42,32 @@ static inline CURL *get_curl_handle_from_zval(zval *zv)
 
 static HashTable *curl_user_headers = NULL;
 
+/* ── Restored-header slist ownership ──
+ *
+ * After curl_exec we rebuild the user's CURLOPT_HTTPHEADER list and hand it
+ * back to the handle. curl does NOT copy a slist passed to CURLOPT_HTTPHEADER —
+ * it keeps the pointer and references it on the next request, so we cannot free
+ * the list when we set it. We therefore own it per handle: the next exec on the
+ * same handle frees the previous list before installing a fresh one, and any
+ * still-installed lists are freed at request shutdown. Keyed by zend_object*.
+ */
+static HashTable *curl_restored_headers = NULL;
+
+static void free_restored_slist(zval *zv)
+{
+    struct curl_slist *list = Z_PTR_P(zv);
+    if (list) curl_slist_free_all(list);
+}
+
 static void curl_headers_init(void)
 {
     if (!curl_user_headers) {
         ALLOC_HASHTABLE(curl_user_headers);
         zend_hash_init(curl_user_headers, 8, NULL, ZVAL_PTR_DTOR, 0);
+    }
+    if (!curl_restored_headers) {
+        ALLOC_HASHTABLE(curl_restored_headers);
+        zend_hash_init(curl_restored_headers, 8, NULL, free_restored_slist, 0);
     }
 }
 
@@ -56,6 +77,48 @@ static void curl_headers_shutdown(void)
         zend_hash_destroy(curl_user_headers);
         FREE_HASHTABLE(curl_user_headers);
         curl_user_headers = NULL;
+    }
+    /* NOTE: curl_restored_headers is intentionally NOT freed here. This runs on
+     * the profiler-disable path too (Akari\disable() mid-request), where the
+     * user's CurlHandle objects are still alive and may be reused. The restored
+     * slists are still installed on those handles via CURLOPT_HTTPHEADER, and
+     * curl does not copy them — freeing now would leave a dangling pointer that
+     * a later curl_exec($ch) would dereference. We free them only at true
+     * request shutdown via curl_restored_headers_free(), by which point PHP has
+     * destroyed the request's objects so no handle can reference them. */
+}
+
+/* Free the owned restored slists. Only safe at engine RSHUTDOWN, after the
+ * request's CurlHandle objects have been destroyed. */
+static void curl_restored_headers_free(void)
+{
+    if (curl_restored_headers) {
+        zend_hash_destroy(curl_restored_headers);
+        FREE_HASHTABLE(curl_restored_headers);
+        curl_restored_headers = NULL;
+    }
+}
+
+/* Install a freshly-built restored slist for this handle, freeing any list we
+ * previously owned for it. Takes ownership of `list`. */
+static void set_restored_slist(zval *handle_zval, struct curl_slist *list)
+{
+    if (!curl_restored_headers || !handle_zval || Z_TYPE_P(handle_zval) != IS_OBJECT) {
+        /* No place to track it — free now to avoid a leak. Safe because the
+         * caller has not yet handed it to curl in this path. */
+        if (list) curl_slist_free_all(list);
+        return;
+    }
+    uintptr_t key = (uintptr_t)Z_OBJ_P(handle_zval);
+    if (list) {
+        /* update_ptr runs the dtor on any existing entry, freeing the
+         * previously-installed list before we replace it. (It asserts a
+         * non-NULL pointer, hence the NULL case is handled separately below.) */
+        zend_hash_index_update_ptr(curl_restored_headers, key, list);
+    } else {
+        /* Nothing to install — drop any list we previously owned for this
+         * handle (the dtor frees it). del on a missing key is a no-op. */
+        zend_hash_index_del(curl_restored_headers, key);
     }
 }
 
@@ -177,8 +240,13 @@ static void curl_exec_post(profiler_state_t *state, zend_execute_data *execute_d
                         }
                     } ZEND_HASH_FOREACH_END();
                     curl_easy_setopt(ch, CURLOPT_HTTPHEADER, restored);
+                    /* curl references this list until the next request; we own
+                     * it and free it on the next exec or at request shutdown. */
+                    set_restored_slist(handle_arg, restored);
                 } else {
                     curl_easy_setopt(ch, CURLOPT_HTTPHEADER, NULL);
+                    /* Drop any list we previously owned for this handle. */
+                    set_restored_slist(handle_arg, NULL);
                 }
             }
         }
@@ -266,6 +334,15 @@ void curl_propagation_rinit(void)
 void curl_propagation_rshutdown(void)
 {
     curl_headers_shutdown();
+}
+
+/* Called only from PHP_RSHUTDOWN, after the request's CurlHandle objects are
+ * gone. Frees the restored slists we still own. Kept separate from
+ * curl_propagation_rshutdown() because that path also runs on Akari\disable(),
+ * where handles are still live (see curl_headers_shutdown). */
+void curl_propagation_request_end(void)
+{
+    curl_restored_headers_free();
 }
 
 /* ── curl_multi_exec hook ── */
