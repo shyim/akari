@@ -101,6 +101,7 @@ Then restart PHP-FPM or run your CLI app. Traces will appear in your collector w
 | System | What's traced | Attributes |
 |--------|--------------|------------|
 | **PDO** | `query`, `exec`, `prepare`, `beginTransaction`, `commit`, `rollback` | `db.system`, `db.name`, `db.statement`, `db.user` |
+| **SQLite3** | `query`, `querySingle`, `exec`, `prepare`, `SQLite3Stmt::execute` (SQL recovered from `prepare`) | `db.system=sqlite`, `db.statement` |
 | **MySQLi** | OOP + procedural, `connect`, `prepare`, `execute`, transactions | `db.system=mysql`, SQL statement |
 | **OCI8 / Oracle** | `oci_parse`, `oci_execute`, `oci_connect`, `oci_commit`, `oci_rollback` | `db.system=oracle` |
 | **Redis / RedisCluster** | 150+ commands with key extraction (phpredis + Relay) | `db.system=redis`, `db.statement=GET key` |
@@ -332,6 +333,7 @@ src/
 ├── observer.c                    # zend_observer begin/end callbacks
 ├── hook_registry.c/h             # Modular hook registration system
 ├── hook_pdo.c                    # PDO instrumentation
+├── hook_sqlite3.c                # SQLite3 (ext-sqlite3) instrumentation
 ├── hook_curl.c                   # curl instrumentation
 ├── hook_redis.c                  # Redis / RedisCluster / Relay
 ├── hook_mysqli.c                 # MySQLi (OO + procedural)

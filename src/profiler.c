@@ -18,6 +18,7 @@ static void init_hook_registry(void)
 
     /* Register all hook modules */
     hook_pdo_register(&g_hook_registry);
+    hook_sqlite3_register(&g_hook_registry);
     hook_curl_register(&g_hook_registry);
     hook_redis_register(&g_hook_registry);
     hook_amqp_register(&g_hook_registry);
@@ -160,6 +161,9 @@ void profiler_rshutdown(void)
 
     /* Clean up curl header tracking */
     curl_propagation_rshutdown();
+
+    /* Clean up SQLite3 prepared-statement SQL tracking */
+    sqlite3_rshutdown();
 
     /* Free per-request attribute arrays to prevent memory bloat */
     free(g_state->db_attrs);  g_state->db_attrs = NULL;  g_state->db_attr_capacity = 0;

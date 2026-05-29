@@ -105,6 +105,8 @@ void curl_propagation_rshutdown(void);
 #include "hook_registry.h"
 
 void hook_pdo_register(hook_registry_t *reg);
+void hook_sqlite3_register(hook_registry_t *reg);
+void sqlite3_rshutdown(void);
 void hook_curl_register(hook_registry_t *reg);
 void hook_redis_register(hook_registry_t *reg);
 void hook_amqp_register(hook_registry_t *reg);
