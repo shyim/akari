@@ -445,6 +445,14 @@ void profiler_mark_escaped_exceptions(profiler_state_t *state)
      * one that escaped. */
     zend_object *live = EG(exception);
 
+    /* exit()/die() unwinds via the same EG(exception) machinery but is not an
+     * error — the engine itself distinguishes these sentinels. Treating them as
+     * escaped exceptions would mark every CLI command that ends in exit($code)
+     * (Symfony console, Laravel artisan, …) as a failed span. Ignore them. */
+    if (live && (zend_is_unwind_exit(live) || zend_is_graceful_exit(live))) {
+        live = NULL;
+    }
+
     /* Record the escape on the root span independently of hooked spans. The
      * engine clears EG(exception) before request shutdown, so finalize_root_span
      * cannot re-derive this; capturing it here keeps the root ERROR status even

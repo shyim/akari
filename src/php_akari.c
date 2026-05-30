@@ -20,6 +20,7 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("akari.udp_port", "4319", PHP_INI_SYSTEM, OnUpdateLong, udp_port, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_compile", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_compile, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_gc", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_gc, zend_akari_globals, akari_globals)
+    STD_PHP_INI_BOOLEAN("akari.trace_cli", "1", PHP_INI_SYSTEM, OnUpdateBool, trace_cli, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.flush_threshold", "4096", PHP_INI_SYSTEM, OnUpdateLong, flush_threshold, zend_akari_globals, akari_globals)
 PHP_INI_END()
 
@@ -37,6 +38,7 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->udp_port = 4319;
     akari_globals->trace_compile = 0;
     akari_globals->trace_gc = 0;
+    akari_globals->trace_cli = 1;
     akari_globals->flush_threshold = PROFILER_FLUSH_THRESHOLD;
     /* Per-request/per-thread pointers: created lazily during a request, must
      * start NULL so the lazy-init checks fire and so a thread that never
@@ -96,7 +98,7 @@ static void export_spans(profiler_state_t *state)
     if (!state) return;
     const char *service_name = get_service_name(state);
 
-    int has_root = (state->root.end_time_ns > 0 && !state->root.is_cli);
+    int has_root = (state->root.end_time_ns > 0);
     if (state->span_count > 0 || has_root) {
         udp_export_spans(state, service_name);
     }
@@ -298,6 +300,8 @@ ZEND_NAMED_FUNCTION(zf_akari_set_transaction_name)
             memcpy(state->root.name, ZSTR_VAL(name), name_len);
             state->root.name[name_len] = '\0';
             state->root.name_len = name_len;
+            /* An explicit name must survive a later markAsWebTransaction(). */
+            state->root.name_is_auto = 0;
         }
     }
 }
@@ -734,6 +738,7 @@ ZEND_NAMED_FUNCTION(zf_akari_mark_as_cli)
     profiler_state_t *state = profiler_get_state();
     if (state) {
         state->root.is_cli = 1;
+        state->root.kind = SPAN_KIND_INTERNAL;
     }
 }
 

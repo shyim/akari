@@ -314,7 +314,7 @@ static void write_root_span_json(json_buf_t *jb, profiler_state_t *state)
     jb_str(jb, ",\"name\":\"");
     jb_json_escaped(jb, root->name, root->name_len);
     jb_str(jb, "\",\"kind\":");
-    jb_uint64(jb, SPAN_KIND_SERVER);
+    jb_uint64(jb, root->kind ? root->kind : SPAN_KIND_SERVER);
     jb_str(jb, ",\"startTimeUnixNano\":\"");
     jb_uint64(jb, root->start_time_ns);
     jb_str(jb, "\",\"endTimeUnixNano\":\"");
@@ -349,6 +349,12 @@ static void write_root_span_json(json_buf_t *jb, profiler_state_t *state)
         if (n) jb_char(jb, ',');
         jb_str(jb, "{\"key\":\"http.controller\",\"value\":{\"stringValue\":\"");
         jb_json_escaped(jb, root->http_controller, strlen(root->http_controller));
+        jb_str(jb, "\"}}"); n++;
+    }
+    if (root->process_command_line[0]) {
+        if (n) jb_char(jb, ',');
+        jb_str(jb, "{\"key\":\"process.command_line\",\"value\":{\"stringValue\":\"");
+        jb_json_escaped(jb, root->process_command_line, strlen(root->process_command_line));
         jb_str(jb, "\"}}"); n++;
     }
 

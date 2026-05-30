@@ -4,11 +4,12 @@ Akari\log under CLI with no active span omits spanId but keeps trace_id
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
 akari.enable=1
+akari.trace_cli=0
 --FILE--
 <?php
-// The test SAPI is CLI, so the root span is inactive (init_root_span sets
-// root.active = 0 for CLI) and no child span is on the stack. The log record is
-// still buffered, carries the trace_id, but has no span_id to correlate to.
+// With akari.trace_cli=0 the CLI root span is inactive (init_root_span sets
+// root.active = 0) and no child span is on the stack. The log record is still
+// buffered, carries the trace_id, but has no span_id to correlate to.
 Akari\log('info', 'cli scope, no span');
 
 $data = json_decode(Akari\getLogsJson(), true);

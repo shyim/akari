@@ -191,6 +191,45 @@ func TestRootSpanRuntimeEnv(t *testing.T) {
 	}
 }
 
+// A CLI root span is INTERNAL (kind 1), not SERVER, but must still emit its
+// runtime annotations and the full command line as process.command_line.
+func TestRootSpanCliCommandLine(t *testing.T) {
+	dg := makeDatagram("test-svc", makeTraceID(), Span{
+		SpanID:             makeSpanID(),
+		Name:               "php bin/console asset:install",
+		Kind:               1,
+		StartNs:            1000,
+		EndNs:              2000,
+		PhpVersion:         "8.5.6",
+		PhpSapi:            "cli",
+		ProcessCommandLine: "bin/console asset:install --no-debug",
+	})
+
+	data, err := msgpack.Marshal(dg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Transform(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw := string(res.Traces)
+
+	checks := []string{
+		"process.command_line",
+		"bin/console asset:install --no-debug",
+		"php.sapi",
+		"cli",
+	}
+	for _, s := range checks {
+		if !contains(raw, s) {
+			t.Errorf("missing %q in output", s)
+		}
+	}
+}
+
 func TestRootSpanFramework(t *testing.T) {
 	dg := makeDatagram("test-svc", makeTraceID(), Span{
 		SpanID:         makeSpanID(),
@@ -230,21 +269,22 @@ func TestRootSpanFramework(t *testing.T) {
 func TestMsgpackRoundtrip(t *testing.T) {
 	// Verify all new fields survive a msgpack marshal → unmarshal roundtrip
 	original := Span{
-		SpanID:           makeSpanID(),
-		Name:             "test",
-		ExceptionType:    "Error",
-		ExceptionMessage: "oops",
-		ExceptionTimeNs:  999,
-		PhpVersion:       "8.5.6",
-		PhpSapi:          "cli",
-		HttpRoute:        "home",
-		HttpController:   "HomeController",
-		OpcacheOn:        1,
-		OpcacheMemMb:     256,
-		MaxExecTime:      30,
-		MemoryLimitMb:    1024,
-		PeakMemBytes:     65536,
-		DisplayErrors:    1,
+		SpanID:             makeSpanID(),
+		Name:               "test",
+		ExceptionType:      "Error",
+		ExceptionMessage:   "oops",
+		ExceptionTimeNs:    999,
+		PhpVersion:         "8.5.6",
+		PhpSapi:            "cli",
+		HttpRoute:          "home",
+		HttpController:     "HomeController",
+		ProcessCommandLine: "bin/console cache:clear",
+		OpcacheOn:          1,
+		OpcacheMemMb:       256,
+		MaxExecTime:        30,
+		MemoryLimitMb:      1024,
+		PeakMemBytes:       65536,
+		DisplayErrors:      1,
 	}
 
 	data, err := msgpack.Marshal(original)
@@ -274,6 +314,9 @@ func TestMsgpackRoundtrip(t *testing.T) {
 	}
 	if decoded.HttpController != "HomeController" {
 		t.Error("HttpController not preserved")
+	}
+	if decoded.ProcessCommandLine != "bin/console cache:clear" {
+		t.Error("ProcessCommandLine not preserved")
 	}
 }
 
