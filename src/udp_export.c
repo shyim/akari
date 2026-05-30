@@ -173,6 +173,7 @@ static void write_root_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
     uint32_t root_fields = 26;
     if (root->http_route[0]) root_fields++;
     if (root->http_controller[0]) root_fields++;
+    if (root->process_command_line[0]) root_fields++;
     msgpack_write_map(buf, root_fields);
     msgpack_write_key(buf, "s");
     msgpack_write_bin(buf, root->span_id, 16);
@@ -181,7 +182,7 @@ static void write_root_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
     msgpack_write_key(buf, "n");
     msgpack_write_str(buf, root->name, root->name_len);
     msgpack_write_key(buf, "k");
-    msgpack_write_uint8(buf, SPAN_KIND_SERVER);
+    msgpack_write_uint8(buf, root->kind ? root->kind : SPAN_KIND_SERVER);
     msgpack_write_key(buf, "sc");
     msgpack_write_uint8(buf, root->status_code);
     msgpack_write_key(buf, "sm");
@@ -234,6 +235,10 @@ static void write_root_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
     if (root->http_controller[0]) {
         msgpack_write_key(buf, "hk");
         msgpack_write_str(buf, root->http_controller, strlen(root->http_controller));
+    }
+    if (root->process_command_line[0]) {
+        msgpack_write_key(buf, "pc");
+        msgpack_write_str(buf, root->process_command_line, strlen(root->process_command_line));
     }
 }
 
@@ -338,7 +343,7 @@ void udp_export_spans(profiler_state_t *state, const char *service_name)
 {
     if (g_udp_fd < 0 || !state) return;
 
-    int include_root = (state->root.end_time_ns > 0 && !state->root.is_cli);
+    int include_root = (state->root.end_time_ns > 0);
 
     size_t new_spans = 0;
     for (size_t i = 0; i < state->span_count; i++) {

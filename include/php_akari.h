@@ -34,6 +34,7 @@ ZEND_BEGIN_MODULE_GLOBALS(akari)
     zend_long udp_port;
     zend_bool trace_compile;
     zend_bool trace_gc;
+    zend_bool trace_cli;
     zend_long flush_threshold;
     /* Per-request profiler state; NULL until profiler_init() for the request. */
     profiler_state_t *state;

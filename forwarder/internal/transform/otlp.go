@@ -99,6 +99,9 @@ type Span struct {
 	// Root span: framework-detected route/controller
 	HttpRoute      string `msgpack:"hr,omitempty"`
 	HttpController string `msgpack:"hk,omitempty"`
+
+	// Root span: full CLI command line (process.command_line)
+	ProcessCommandLine string `msgpack:"pc,omitempty"`
 }
 
 // OTLP JSON structures (minimal, matching ExportTraceServiceRequest)
@@ -418,8 +421,11 @@ func Transform(data []byte) (Result, error) {
 			}}
 		}
 
-		// HTTP attrs for root/SERVER spans
-		if s.Kind == 2 {
+		// Root-span attributes (HTTP for SERVER roots, command line for CLI roots,
+		// plus shared runtime annotations). A SERVER span is always the root; a CLI
+		// root is INTERNAL but is the only INTERNAL span carrying php.sapi. HTTP
+		// fields stay individually guarded so they don't appear on a CLI root.
+		if s.Kind == 2 || s.PhpSapi != "" {
 			if s.HttpMethod != "" {
 				attrs = append(attrs, otlpKeyValue{Key: "http.request.method", Value: strVal(s.HttpMethod)})
 			}
@@ -444,6 +450,9 @@ func Transform(data []byte) (Result, error) {
 			}
 			if s.HttpController != "" {
 				attrs = append(attrs, otlpKeyValue{Key: "http.controller", Value: strVal(s.HttpController)})
+			}
+			if s.ProcessCommandLine != "" {
+				attrs = append(attrs, otlpKeyValue{Key: "process.command_line", Value: strVal(s.ProcessCommandLine)})
 			}
 			// PHP runtime environment annotations
 			if s.PhpVersion != "" {

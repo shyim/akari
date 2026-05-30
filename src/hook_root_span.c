@@ -34,6 +34,120 @@ static int parse_traceparent(const char *header, char *trace_id_out, char *paren
     return 1;
 }
 
+/* Capture PHP runtime/INI annotations shared by every root span (web and CLI):
+ * version, SAPI, OPcache and a handful of runtime limits. */
+static void init_root_runtime_annotations(profiler_root_span_t *root)
+{
+    snprintf(root->php_version, sizeof(root->php_version), "%s", PHP_VERSION);
+    snprintf(root->php_sapi, sizeof(root->php_sapi), "%s", sapi_module.name);
+
+    /* OPcache settings (if extension is loaded) */
+    const char *val;
+    val = zend_ini_string_ex("opcache.enable", sizeof("opcache.enable") - 1, 0, NULL);
+    root->opcache_enabled = (val && strcmp(val, "1") == 0) ? 1 : 0;
+
+    val = zend_ini_string_ex("opcache.memory_consumption", sizeof("opcache.memory_consumption") - 1, 0, NULL);
+    root->opcache_memory_mb = val ? atol(val) : 0;
+
+    val = zend_ini_string_ex("opcache.max_accelerated_files", sizeof("opcache.max_accelerated_files") - 1, 0, NULL);
+    root->opcache_max_files = val ? atol(val) : 0;
+
+    val = zend_ini_string_ex("opcache.interned_strings_buffer", sizeof("opcache.interned_strings_buffer") - 1, 0, NULL);
+    root->opcache_interned_mb = val ? atol(val) : 0;
+
+    /* PHP runtime settings */
+    val = zend_ini_string_ex("date.timezone", sizeof("date.timezone") - 1, 0, NULL);
+    if (val && val[0]) {
+        snprintf(root->date_timezone, sizeof(root->date_timezone), "%s", val);
+    }
+
+    val = zend_ini_string_ex("max_execution_time", sizeof("max_execution_time") - 1, 0, NULL);
+    root->max_execution_time = val ? atol(val) : 0;
+
+    val = zend_ini_string_ex("memory_limit", sizeof("memory_limit") - 1, 0, NULL);
+    if (val) {
+        long ml = atol(val);
+        size_t len = strlen(val);
+        if (len > 0) {
+            char suffix = val[len - 1];
+            if (suffix == 'M' || suffix == 'm') ml *= 1;
+            else if (suffix == 'G' || suffix == 'g') ml *= 1024;
+            else ml = ml / (1024 * 1024); /* bytes to MB */
+        }
+        root->memory_limit_mb = ml;
+    }
+
+    val = zend_ini_string_ex("realpath_cache_size", sizeof("realpath_cache_size") - 1, 0, NULL);
+    root->realpath_cache_size = val ? atol(val) : 0;
+
+    val = zend_ini_string_ex("display_errors", sizeof("display_errors") - 1, 0, NULL);
+    root->display_errors = (val && (strcmp(val, "1") == 0 || strcasecmp(val, "On") == 0)) ? 1 : 0;
+
+    val = zend_ini_string_ex("zend.assertions", sizeof("zend.assertions") - 1, 0, NULL);
+    root->zend_assertions = val ? (int)atol(val) : -1;
+}
+
+/* Append one CLI argument to dst (a "cmd arg arg ..." accumulator), space-
+ * separated, never overflowing cap. Returns the new length. */
+static size_t append_cli_arg(char *dst, size_t len, size_t cap, const char *arg)
+{
+    if (len + 1 >= cap) return len;
+    if (len > 0) dst[len++] = ' ';
+    size_t alen = strlen(arg);
+    if (len + alen >= cap) alen = cap - 1 - len;
+    memcpy(dst + len, arg, alen);
+    len += alen;
+    dst[len] = '\0';
+    return len;
+}
+
+/* Build the CLI command line and span name from the PHP binary and argv.
+ *
+ * process.command_line is the full command as the OS sees it: the PHP executable
+ * followed by every argv element verbatim, e.g.
+ *   "/usr/bin/php /var/www/bin/console asset:install".
+ *
+ * The span name stays readable and low-cardinality: "php <script-basename>
+ * <args>", e.g. "php console asset:install". Falls back to "php CLI" when there
+ * is no script/argv (e.g. `php -r`, interactive). */
+static void cli_span_name(profiler_root_span_t *root)
+{
+    const char *script = SG(request_info).path_translated;
+    int argc = SG(request_info).argc;
+    char **argv = SG(request_info).argv;
+    const char *php_bin = PG(php_binary);
+
+    /* process.command_line: real executable path + full argv (script path + args). */
+    char *cmd = root->process_command_line;
+    size_t cmdcap = sizeof(root->process_command_line);
+    size_t cmdlen = append_cli_arg(cmd, 0, cmdcap, (php_bin && php_bin[0]) ? php_bin : "php");
+    for (int i = 0; i < argc && argv && argv[i]; i++) {
+        cmdlen = append_cli_arg(cmd, cmdlen, cmdcap, argv[i]);
+    }
+
+    /* Span name: "php <basename> <args>" — basename keeps the name readable. */
+    char name[ROOT_ATTR_MAX];
+    size_t namelen = 0;
+    if (script && script[0]) {
+        const char *base = strrchr(script, '/');
+        base = base ? base + 1 : script;
+        namelen = append_cli_arg(name, 0, sizeof(name), base);
+        snprintf(root->url_path, sizeof(root->url_path), "%s", script);
+    }
+    for (int i = 1; i < argc && argv && argv[i]; i++) {
+        namelen = append_cli_arg(name, namelen, sizeof(name), argv[i]);
+    }
+
+    if (namelen > 0) {
+        int n = snprintf(root->name, sizeof(root->name), "php %s", name);
+        root->name_len = profiler_clamp_snprintf_len(n, sizeof(root->name));
+    } else {
+        memcpy(root->name, "php CLI", 7);
+        root->name_len = 7;
+    }
+    root->name_is_auto = 1;
+}
+
 void init_root_span(profiler_state_t *state)
 {
     profiler_root_span_t *root = &state->root;
@@ -43,7 +157,23 @@ void init_root_span(profiler_state_t *state)
     root->is_cli = (strcmp(sapi_module.name, "cli") == 0);
 
     if (root->is_cli) {
-        root->active = 0;
+        /* Without auto CLI tracing, leave the root inactive: individual
+         * instrumented calls still emit spans, but there is no entry span
+         * unless userland calls markAsWebTransaction(). */
+        if (!AKARI_G(trace_cli)) {
+            root->active = 0;
+            return;
+        }
+
+        /* Auto-trace the CLI invocation as an INTERNAL root span named after
+         * the script being run. */
+        profiler_generate_hex_id(state, root->span_id, 16);
+        root->start_time_ns = realtime_ns();
+        root->status_code = SPAN_STATUS_UNSET;
+        root->kind = SPAN_KIND_INTERNAL;
+        root->active = 1;
+        cli_span_name(root);
+        init_root_runtime_annotations(root);
         return;
     }
 
@@ -51,6 +181,7 @@ void init_root_span(profiler_state_t *state)
     profiler_generate_hex_id(state, root->span_id, 16);
     root->start_time_ns = realtime_ns();
     root->status_code = SPAN_STATUS_UNSET;
+    root->kind = SPAN_KIND_SERVER;
     root->active = 1;
 
     /* HTTP attributes from SAPI */
@@ -107,53 +238,7 @@ void init_root_span(profiler_state_t *state)
     }
 
     /* Runtime environment annotations */
-    snprintf(root->php_version, sizeof(root->php_version), "%s", PHP_VERSION);
-    snprintf(root->php_sapi, sizeof(root->php_sapi), "%s", sapi_module.name);
-
-    /* OPcache settings (if extension is loaded) */
-    const char *val;
-    val = zend_ini_string_ex("opcache.enable", sizeof("opcache.enable") - 1, 0, NULL);
-    root->opcache_enabled = (val && strcmp(val, "1") == 0) ? 1 : 0;
-
-    val = zend_ini_string_ex("opcache.memory_consumption", sizeof("opcache.memory_consumption") - 1, 0, NULL);
-    root->opcache_memory_mb = val ? atol(val) : 0;
-
-    val = zend_ini_string_ex("opcache.max_accelerated_files", sizeof("opcache.max_accelerated_files") - 1, 0, NULL);
-    root->opcache_max_files = val ? atol(val) : 0;
-
-    val = zend_ini_string_ex("opcache.interned_strings_buffer", sizeof("opcache.interned_strings_buffer") - 1, 0, NULL);
-    root->opcache_interned_mb = val ? atol(val) : 0;
-
-    /* PHP runtime settings */
-    val = zend_ini_string_ex("date.timezone", sizeof("date.timezone") - 1, 0, NULL);
-    if (val && val[0]) {
-        snprintf(root->date_timezone, sizeof(root->date_timezone), "%s", val);
-    }
-
-    val = zend_ini_string_ex("max_execution_time", sizeof("max_execution_time") - 1, 0, NULL);
-    root->max_execution_time = val ? atol(val) : 0;
-
-    val = zend_ini_string_ex("memory_limit", sizeof("memory_limit") - 1, 0, NULL);
-    if (val) {
-        long ml = atol(val);
-        size_t len = strlen(val);
-        if (len > 0) {
-            char suffix = val[len - 1];
-            if (suffix == 'M' || suffix == 'm') ml *= 1;
-            else if (suffix == 'G' || suffix == 'g') ml *= 1024;
-            else ml = ml / (1024 * 1024); /* bytes to MB */
-        }
-        root->memory_limit_mb = ml;
-    }
-
-    val = zend_ini_string_ex("realpath_cache_size", sizeof("realpath_cache_size") - 1, 0, NULL);
-    root->realpath_cache_size = val ? atol(val) : 0;
-
-    val = zend_ini_string_ex("display_errors", sizeof("display_errors") - 1, 0, NULL);
-    root->display_errors = (val && (strcmp(val, "1") == 0 || strcasecmp(val, "On") == 0)) ? 1 : 0;
-
-    val = zend_ini_string_ex("zend.assertions", sizeof("zend.assertions") - 1, 0, NULL);
-    root->zend_assertions = val ? (int)atol(val) : -1;
+    init_root_runtime_annotations(root);
 }
 
 void promote_root_to_web(profiler_state_t *state)
@@ -163,16 +248,38 @@ void promote_root_to_web(profiler_state_t *state)
     /* No-op if the root is already an active web transaction. */
     if (!root->is_cli && root->active) return;
 
-    /* In CLI, init_root_span leaves the root inactive and without an id/start
-     * time/name. Userland markAsWebTransaction() promotes it to a real root
-     * span: give it the identity and timing a request root needs so it is
-     * finalized and exported like any HTTP root. */
+    /* Promote a CLI root to a web (SERVER) transaction. With auto CLI tracing
+     * the root is already active (INTERNAL kind, named after the script); with
+     * it disabled init_root_span leaves the root inactive and without an
+     * id/start time/name. Either way, give it the identity, kind and timing a
+     * request root needs so it is finalized and exported like any HTTP root. */
     root->is_cli = 0;
+    root->kind = SPAN_KIND_SERVER;
     if (!root->active) {
         profiler_generate_hex_id(state, root->span_id, 16);
         root->start_time_ns = realtime_ns();
         root->status_code = SPAN_STATUS_UNSET;
         root->active = 1;
+        /* The inactive CLI path (akari.trace_cli=0) never ran these, so the root
+         * would otherwise export with empty php.version / php.sapi. */
+        init_root_runtime_annotations(root);
+        /* A name set via setTransactionName() while the root was inactive was
+         * only stored in custom_transaction_name; apply it now. */
+        if (state->has_custom_transaction && state->custom_transaction_name[0]) {
+            size_t len = strlen(state->custom_transaction_name);
+            if (len >= ROOT_ATTR_MAX) len = ROOT_ATTR_MAX - 1;
+            memcpy(root->name, state->custom_transaction_name, len);
+            root->name[len] = '\0';
+            root->name_len = len;
+        }
+    }
+    /* Drop the auto-derived CLI name so the web default applies, but preserve a
+     * name set explicitly via setTransactionName(). */
+    if (root->name_is_auto) {
+        root->name[0] = '\0';
+        root->name_len = 0;
+        root->url_path[0] = '\0';
+        root->name_is_auto = 0;
     }
     if (!root->name[0]) {
         memcpy(root->name, "CLI", 3);
@@ -186,12 +293,17 @@ void finalize_root_span(profiler_state_t *state)
     if (!root->active) return;
 
     root->end_time_ns = realtime_ns();
-    root->http_status_code = SG(sapi_headers).http_response_code;
-    if (root->http_status_code == 0) root->http_status_code = 200;
 
-    /* Set error status for 5xx */
-    if (root->http_status_code >= 500) {
-        root->status_code = SPAN_STATUS_ERROR;
+    /* HTTP status only applies to web transactions; a CLI root has no response
+     * code, so leave http_status_code at 0 for it. */
+    if (!root->is_cli) {
+        root->http_status_code = SG(sapi_headers).http_response_code;
+        if (root->http_status_code == 0) root->http_status_code = 200;
+
+        /* Set error status for 5xx */
+        if (root->http_status_code >= 500) {
+            root->status_code = SPAN_STATUS_ERROR;
+        }
     }
 
     /* Peak memory usage */
@@ -201,8 +313,9 @@ void finalize_root_span(profiler_state_t *state)
      * mid-unwind, but the engine clears it before request shutdown — so also
      * honor root_exception_escaped, recorded during unwind in
      * profiler_mark_escaped_exceptions for exceptions that escaped every frame
-     * (including throws with no hooked span on the stack). */
-    if (EG(exception)) {
+     * (including throws with no hooked span on the stack). An exit()/die()
+     * sentinel unwinds the same way but is not an error — ignore it. */
+    if (EG(exception) && !zend_is_unwind_exit(EG(exception)) && !zend_is_graceful_exit(EG(exception))) {
         root->status_code = SPAN_STATUS_ERROR;
         zend_object *ex = EG(exception);
         zval rv;
@@ -217,6 +330,18 @@ void finalize_root_span(profiler_state_t *state)
         if (state->root_exception_message[0] && !root->status_message[0]) {
             snprintf(root->status_message, sizeof(root->status_message),
                      "%s", state->root_exception_message);
+        }
+    }
+
+    /* CLI: a non-zero process exit code means the command failed, even when the
+     * underlying exception was caught and handled by the framework (e.g. Symfony
+     * console logs the error and calls exit(1)). Reflect that as an error on the
+     * root span unless an uncaught exception already set a more specific status. */
+    if (root->is_cli && root->status_code != SPAN_STATUS_ERROR && EG(exit_status) != 0) {
+        root->status_code = SPAN_STATUS_ERROR;
+        if (!root->status_message[0]) {
+            snprintf(root->status_message, sizeof(root->status_message),
+                     "exited with code %d", EG(exit_status));
         }
     }
 

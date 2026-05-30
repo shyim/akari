@@ -188,6 +188,9 @@ typedef struct {
 /* ── Root span (HTTP request) ── */
 
 #define ROOT_ATTR_MAX 256
+/* Full CLI command line can be long (script path + subcommand + flags); give it
+ * a roomier cap than the per-attribute limit but still bounded for span size. */
+#define ROOT_CMDLINE_MAX 1024
 
 typedef struct {
     char span_id[16];
@@ -208,14 +211,22 @@ typedef struct {
     char http_route[ROOT_ATTR_MAX];         /* route name (e.g. "app_blog_index") */
     char http_controller[ROOT_ATTR_MAX];    /* controller (e.g. "App\\Controller\\BlogController::index") */
 
+    /* CLI invocation: full command line — PHP executable + argv, e.g.
+     * "/usr/bin/php bin/console asset:install". Emitted as the
+     * process.command_line attribute on a CLI root span. */
+    char process_command_line[ROOT_CMDLINE_MAX];
+
     /* Span name: "METHOD controller" or "METHOD route" or "METHOD /path" */
     char name[ROOT_ATTR_MAX];
     size_t name_len;
+    int name_is_auto;          /* name was auto-derived (e.g. CLI "php script"),
+                                * not set by setTransactionName(); safe to replace */
 
     uint8_t status_code;       /* SPAN_STATUS_* */
     char status_message[256];
+    uint8_t kind;              /* SPAN_KIND_* — SERVER for HTTP, INTERNAL for CLI */
 
-    int is_cli;                /* CLI SAPI = no root HTTP span */
+    int is_cli;                /* CLI SAPI: root is an INTERNAL span, not a web transaction */
     int active;
 
     /* Runtime environment annotations */
