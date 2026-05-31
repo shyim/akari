@@ -17,6 +17,17 @@ services:
     depends_on:
       - forwarder
 
+  shopware:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile.shopware
+    environment:
+      APP_URL: http://localhost:8084
+    ports:
+      - "8084:8000"
+    depends_on:
+      - forwarder
+
   forwarder:
     build:
       context: forwarder

@@ -1,0 +1,33 @@
+FROM ghcr.io/friendsofshopware/shopware-demo-environment:6.7.6
+
+USER root
+
+# Install PHP build dependencies (Alpine)
+RUN apk add --no-cache \
+    $PHPIZE_DEPS \
+    linux-headers \
+    curl-dev
+
+# Build and install akari extension
+WORKDIR /usr/src/akari
+COPY config.m4 ./
+COPY include/ ./include/
+COPY src/ ./src/
+
+RUN phpize \
+    && ./configure --enable-akari \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /usr/src/akari
+
+# Configure akari
+RUN { \
+    echo "extension=akari.so"; \
+    echo "akari.enable=1"; \
+    echo "akari.service_name=shopware-demo"; \
+    echo "akari.udp_host=forwarder"; \
+    echo "akari.udp_port=4319"; \
+    echo "akari.max_depth=32"; \
+} >> /usr/local/etc/php/conf.d/docker-php-ext-akari.ini
+
+USER www-data
