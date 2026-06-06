@@ -12,6 +12,7 @@ Then open:
 - **Simple demo app**: http://localhost:8083
 - **Symfony Demo**: http://localhost:8082
 - **Grafana UI**: http://localhost:3000
+- **Tempo API**: http://localhost:3200
 
 ## Services
 
@@ -20,6 +21,7 @@ Then open:
 | Simple PHP demo | [localhost:8083](http://localhost:8083) | Basic pages showing PDO, curl, closures, and `Akari\log()` |
 | Symfony Demo | [localhost:8082](http://localhost:8082) | Full Symfony app with route detection |
 | Grafana (LGTM) | [localhost:3000](http://localhost:3000) | Traces (Tempo) + logs (Loki) viewer |
+| Tempo API | [localhost:3200](http://localhost:3200) | Direct Tempo HTTP API for trace search and fetches |
 
 The forwarder sends spans to the collector's `/v1/traces` and log records to
 `/v1/logs`; the bundled Grafana LGTM stack stores traces in Tempo and logs in

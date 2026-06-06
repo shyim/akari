@@ -44,3 +44,4 @@ services:
     image: grafana/otel-lgtm:latest
     ports:
       - "3000:3000"   # Grafana UI
+      - "3200:3200"   # Tempo HTTP API

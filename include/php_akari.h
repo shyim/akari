@@ -30,6 +30,7 @@ ZEND_BEGIN_MODULE_GLOBALS(akari)
     char pending_service_name[ROOT_ATTR_MAX];
     zend_long max_depth;
     double min_duration_ms;
+    double event_dispatch_min_duration_ms;
     char *udp_host;
     zend_long udp_port;
     zend_bool trace_compile;

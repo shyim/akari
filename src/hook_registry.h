@@ -26,6 +26,13 @@
 #define HOOK_TYPE_INTERNAL  1  /* Hooks into zend_execute_internal */
 #define HOOK_TYPE_USERLAND  2  /* Hooks into zend_execute_ex */
 
+/* Dynamic duration threshold sources. */
+#define HOOK_THRESHOLD_NONE            0
+#define HOOK_THRESHOLD_EVENT_DISPATCH  1
+
+/* Pre-hook return marker: do not create a span for this call. */
+#define HOOK_PRE_SKIP_SPAN ((void *)(uintptr_t)1)
+
 /* ── Callback signatures ── */
 
 /*
@@ -92,6 +99,7 @@ typedef struct {
      * exceeded this threshold. Avoids overhead for high-frequency fast calls
      * like preg_match, file_get_contents (local), etc. */
     uint64_t min_duration_ns;
+    uint8_t threshold_kind;
 
     /* Callbacks */
     hook_pre_fn pre_hook;
@@ -166,6 +174,19 @@ void hook_register_method(hook_registry_t *reg,
                            int hook_type,
                            uint8_t span_kind,
                            int use_instanceof,
+                           hook_pre_fn pre_hook,
+                           hook_post_fn post_hook);
+
+/*
+ * Register a class method hook with a dynamic per-request threshold source.
+ */
+void hook_register_method_threshold_kind(hook_registry_t *reg,
+                           const char *class_name,
+                           const char *method_name,
+                           int hook_type,
+                           uint8_t span_kind,
+                           int use_instanceof,
+                           uint8_t threshold_kind,
                            hook_pre_fn pre_hook,
                            hook_post_fn post_hook);
 

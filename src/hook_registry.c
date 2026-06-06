@@ -97,6 +97,20 @@ void hook_register_method(hook_registry_t *reg,
                            hook_pre_fn pre_hook,
                            hook_post_fn post_hook)
 {
+    hook_register_method_threshold_kind(reg, class_name, method_name, hook_type,
+        span_kind, use_instanceof, HOOK_THRESHOLD_NONE, pre_hook, post_hook);
+}
+
+void hook_register_method_threshold_kind(hook_registry_t *reg,
+                           const char *class_name,
+                           const char *method_name,
+                           int hook_type,
+                           uint8_t span_kind,
+                           int use_instanceof,
+                           uint8_t threshold_kind,
+                           hook_pre_fn pre_hook,
+                           hook_post_fn post_hook)
+{
     if (reg->count >= HOOK_REGISTRY_MAX) return;
 
     hook_entry_t *e = &reg->entries[reg->count];
@@ -111,6 +125,7 @@ void hook_register_method(hook_registry_t *reg,
     e->span_kind = span_kind;
     e->use_instanceof = use_instanceof;
     e->method_filter = NULL;
+    e->threshold_kind = threshold_kind;
     e->pre_hook = pre_hook;
     e->post_hook = post_hook;
 

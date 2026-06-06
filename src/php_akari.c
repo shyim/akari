@@ -16,6 +16,7 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("akari.service_name", "", PHP_INI_SYSTEM, OnUpdateString, service_name, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.max_depth", "64", PHP_INI_SYSTEM, OnUpdateLong, max_depth, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.min_duration_ms", "0", PHP_INI_SYSTEM, OnUpdateReal, min_duration_ms, zend_akari_globals, akari_globals)
+    STD_PHP_INI_ENTRY("akari.event_dispatch_min_duration_ms", "1", PHP_INI_SYSTEM, OnUpdateReal, event_dispatch_min_duration_ms, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.udp_host", "127.0.0.1", PHP_INI_SYSTEM, OnUpdateString, udp_host, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.udp_port", "4319", PHP_INI_SYSTEM, OnUpdateLong, udp_port, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_compile", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_compile, zend_akari_globals, akari_globals)
@@ -34,6 +35,7 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->pending_service_name[0] = '\0';
     akari_globals->max_depth = 64;
     akari_globals->min_duration_ms = 0;
+    akari_globals->event_dispatch_min_duration_ms = 1;
     akari_globals->udp_host = NULL;
     akari_globals->udp_port = 4319;
     akari_globals->trace_compile = 0;
