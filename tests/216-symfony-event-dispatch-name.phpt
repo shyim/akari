@@ -5,6 +5,7 @@ Symfony EventDispatcher: span name includes event name from dispatch()
 --INI--
 akari.enable=1
 akari.trace_functions=0
+akari.event_dispatch_min_duration_ms=0
 --FILE--
 <?php
 namespace Symfony\Contracts\EventDispatcher {

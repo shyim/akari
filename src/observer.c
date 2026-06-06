@@ -97,7 +97,7 @@ static size_t create_span_entry(profiler_state_t *state, zend_execute_data *exec
     if (has_stack_parent) {
         memcpy(span->parent_span_id, state->spans[parent_span_idx].span_id, 16);
         span->has_parent = 1;
-    } else if (state->root.active) {
+    } else if (state->root.active || state->root.end_time_ns > 0) {
         memcpy(span->parent_span_id, state->root.span_id, 16);
         span->has_parent = 1;
     } else {
@@ -106,6 +106,20 @@ static size_t create_span_entry(profiler_state_t *state, zend_execute_data *exec
     }
 
     return span_idx;
+}
+
+static uint64_t effective_min_duration_ns(const hook_entry_t *hook)
+{
+    if (!hook) return 0;
+
+    if (hook->threshold_kind == HOOK_THRESHOLD_EVENT_DISPATCH) {
+        double min_duration_ms = AKARI_G(event_dispatch_min_duration_ms);
+        if (min_duration_ms < 0) min_duration_ms = 0;
+        if (min_duration_ms > 10000.0) min_duration_ms = 10000.0;
+        return (uint64_t)(min_duration_ms * 1000000.0);
+    }
+
+    return hook->min_duration_ns;
 }
 
 /* ── Span undo helper ── */
@@ -187,14 +201,16 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
 
     size_t span_idx = create_span_entry(state, execute_data, hook);
 
-    /* Run pre-hook (records attributes, may set skip_span) */
+    /* Run pre-hook (records attributes, may request transparent skip) */
     if (hook && hook->pre_hook) {
         void *pre_data = hook->pre_hook(state, execute_data,
                                          &state->spans[span_idx], (uint32_t)span_idx);
         state->spans[span_idx].pre_data = pre_data;
 
-        if (pre_data == (void *)(uintptr_t)1) {
-            state->spans[span_idx].skip_span = 1;
+        if (pre_data == HOOK_PRE_SKIP_SPAN) {
+            undo_span(state, span_idx);
+            stack_push(state, (size_t)-1);
+            return;
         }
     }
 
@@ -269,9 +285,14 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
     hook_entry_t *hook = hook_registry_find(&g_hook_registry, AKARI_G(ce_cache), execute_data, hook_type);
 
     /* Per-hook threshold check */
-    if (hook && hook->min_duration_ns > 0) {
+    uint64_t hook_min_duration_ns = effective_min_duration_ns(hook);
+    if (hook_min_duration_ns > 0) {
         uint64_t duration = span->end_time_ns - span->start_time_ns;
-        if (duration < hook->min_duration_ns) {
+        if (duration < hook_min_duration_ns) {
+            if (hook && hook->post_hook) {
+                hook->post_hook(state, execute_data, return_value, span,
+                                (uint32_t)span_idx, span->pre_data);
+            }
             undo_span(state, span_idx);
             return;
         }

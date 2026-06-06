@@ -169,7 +169,7 @@ static void *file_get_contents_pre(profiler_state_t *state, zend_execute_data *e
         }
     }
     /* Non-HTTP file_get_contents: skip (return special marker to suppress span) */
-    return (void *)(uintptr_t)1;
+    return HOOK_PRE_SKIP_SPAN;
 }
 
 /* ── Mail hook ── */

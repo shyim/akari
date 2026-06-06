@@ -140,9 +140,4 @@ void hook_error_register(hook_registry_t *reg)
         HOOK_TYPE_USERLAND, SPAN_KIND_INTERNAL, 0,
         generic_exception_pre, NULL);
 
-    /* Shopware: the Profiler class wraps errors for dev toolbar — trace it too */
-    hook_register_method(reg,
-        "Shopware\\Core\\Profiling\\Profiler", "trace",
-        HOOK_TYPE_USERLAND, SPAN_KIND_INTERNAL, 0,
-        NULL, NULL);
 }

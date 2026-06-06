@@ -64,7 +64,7 @@ static void *http_stream_open_pre(profiler_state_t *state, zend_execute_data *ex
         }
     }
     /* Not an HTTP URL — skip this span (return marker) */
-    return (void *)(uintptr_t)1;
+    return HOOK_PRE_SKIP_SPAN;
 }
 
 /* ── Registration ── */

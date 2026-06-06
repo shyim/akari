@@ -14,6 +14,8 @@
 #define PROFILER_MAX_STACK        256
 #define PROFILER_BATCH_SIZE       1000
 #define PROFILER_FLUSH_THRESHOLD  4096
+#define PROFILER_EVENT_DISPATCH_STACK_MAX 64
+#define PROFILER_EVENT_NAME_MAX 256
 
 /* OTel span kinds */
 #define SPAN_KIND_INTERNAL  1
@@ -150,6 +152,12 @@ typedef struct {
     uint8_t pending;                         /* 1 = awaiting caught/escaped decision */
     void *exception_obj;                     /* zend_object* thrown (engine hook only) */
 } profiler_exception_event_t;
+
+typedef struct {
+    uint64_t event_handle;
+    char event_name[PROFILER_EVENT_NAME_MAX];
+    size_t event_name_len;
+} profiler_event_dispatch_entry_t;
 
 /* ── Log records (userland Akari\log) ── */
 
@@ -336,6 +344,10 @@ typedef struct profiler_state_s {
 
     /* Userland API: service name override (set by setServiceName()) */
     char service_name_override[ROOT_ATTR_MAX];
+
+    /* Logical event dispatch stack, used to collapse decorator chains. */
+    profiler_event_dispatch_entry_t event_dispatch_stack[PROFILER_EVENT_DISPATCH_STACK_MAX];
+    uint32_t event_dispatch_depth;
 
     /* Userland API: manual span tracking */
     int manual_spans[32];  /* span indices that are manually created */

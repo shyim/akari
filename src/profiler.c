@@ -121,6 +121,7 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms)
     g_state->root_exception_message[0] = '\0';
     g_state->stack_depth = 0;
     g_state->stack_overflow_count = 0;
+    g_state->event_dispatch_depth = 0;
     g_state->service_name_override[0] = '\0';
     g_state->max_depth = (max_depth > PROFILER_MAX_STACK) ? PROFILER_MAX_STACK
                        : (max_depth < 1) ? 1 : (uint32_t)max_depth;
