@@ -110,9 +110,6 @@ jobs:
 
           echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Install system dependencies
-        run: brew install curl
-
       - name: Setup PHP
         uses: shivammathur/setup-php@2.37.1
         with:
