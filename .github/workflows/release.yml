@@ -1,0 +1,186 @@
+name: Release
+
+on:
+  push:
+    tags: ["*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: Version used in generated package names. Defaults to the ref name.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PHP_EXTENSION_BUILDER_VERSION: v0.1.0
+  ARTIFACT_DIR: dist
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    name: "PHP ${{ matrix.php-version }} / Linux ${{ matrix.libc }} / ${{ matrix.thread-safety }}"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ["8.2", "8.3", "8.4", "8.5"]
+        libc: [glibc, musl]
+        thread-safety: [nts, zts]
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+
+      - name: Resolve package version
+        env:
+          INPUT_PACKAGE_VERSION: ${{ inputs.package_version }}
+        run: |
+          if [ -n "$INPUT_PACKAGE_VERSION" ]; then
+            version="$INPUT_PACKAGE_VERSION"
+          else
+            version="$GITHUB_REF_NAME"
+          fi
+
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Install php-extension-builder
+        uses: jaxxstorm/action-install-gh-release@v3.0.0
+        with:
+          repo: shyim/php-extension-builder
+          tag: ${{ env.PHP_EXTENSION_BUILDER_VERSION }}
+          cache: enable
+
+      - name: Build extension
+        shell: bash
+        run: |
+          mkdir -p "$ARTIFACT_DIR"
+
+          zts_args=()
+          if [ "${{ matrix.thread-safety }}" = "zts" ]; then
+            zts_args+=(--zts)
+          fi
+
+          php-extension-builder build \
+            --package-version "$PACKAGE_VERSION" \
+            --php-version "${{ matrix.php-version }}" \
+            --libc "${{ matrix.libc }}" \
+            --configure-flag "--enable-akari" \
+            --apt-package libcurl4-openssl-dev \
+            --apk-package curl-dev \
+            --out-dir "$ARTIFACT_DIR" \
+            "${zts_args[@]}"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: akari-php${{ matrix.php-version }}-linux-${{ matrix.libc }}-${{ matrix.thread-safety }}
+          path: ${{ env.ARTIFACT_DIR }}/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  build-macos:
+    runs-on: ${{ matrix.target.runner }}
+    name: "PHP ${{ matrix.php-version }} / macOS ${{ matrix.target.arch }} / nts"
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ["8.2", "8.3", "8.4", "8.5"]
+        target:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+
+      - name: Resolve package version
+        env:
+          INPUT_PACKAGE_VERSION: ${{ inputs.package_version }}
+        run: |
+          if [ -n "$INPUT_PACKAGE_VERSION" ]; then
+            version="$INPUT_PACKAGE_VERSION"
+          else
+            version="$GITHUB_REF_NAME"
+          fi
+
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Install system dependencies
+        run: brew install curl
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+          extensions: curl, pdo, sqlite3, session, mbstring
+
+      - name: Install php-extension-builder
+        uses: jaxxstorm/action-install-gh-release@v3.0.0
+        with:
+          repo: shyim/php-extension-builder
+          tag: ${{ env.PHP_EXTENSION_BUILDER_VERSION }}
+          cache: enable
+
+      - name: Build extension
+        run: |
+          mkdir -p "$ARTIFACT_DIR"
+
+          curl_prefix="$(brew --prefix curl)"
+          export CPPFLAGS="-I${curl_prefix}/include"
+          export LDFLAGS="-L${curl_prefix}/lib"
+
+          php-extension-builder build \
+            --target-os darwin \
+            --package-version "$PACKAGE_VERSION" \
+            --php-version "${{ matrix.php-version }}" \
+            --php-config "$(command -v php-config)" \
+            --configure-flag "--enable-akari" \
+            --out-dir "$ARTIFACT_DIR"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: akari-php${{ matrix.php-version }}-darwin-${{ matrix.target.arch }}-nts
+          path: ${{ env.ARTIFACT_DIR }}/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    runs-on: ubuntu-latest
+    name: Publish GitHub release
+    needs:
+      - build-linux
+      - build-macos
+    if: startsWith(github.ref, 'refs/tags/')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p dist
+          find packages -type f -name '*.zip' -exec cp '{}' dist/ \;
+          find dist -type f -name '*.zip' -print | sort | xargs sha256sum > dist/checksums.txt
+          ls -lah dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/checksums.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
