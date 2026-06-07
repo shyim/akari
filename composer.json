@@ -8,6 +8,7 @@
     },
     "php-ext": {
         "priority": 90,
-        "configure-options": []
+        "configure-options": [],
+        "download-url-method": ["pre-packaged-binary"]
     }
 }
