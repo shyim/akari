@@ -3,7 +3,6 @@ name: Release
 on:
   push:
     tags: ["*"]
-  pull_request:
   workflow_dispatch:
     inputs:
       package_version:
@@ -36,13 +35,10 @@ jobs:
 
       - name: Resolve package version
         env:
-          EVENT_NAME: ${{ github.event_name }}
           INPUT_PACKAGE_VERSION: ${{ inputs.package_version }}
         run: |
           if [ -n "$INPUT_PACKAGE_VERSION" ]; then
             version="$INPUT_PACKAGE_VERSION"
-          elif [ "$EVENT_NAME" = "pull_request" ]; then
-            version="999.999"
           else
             version="$GITHUB_REF_NAME"
           fi
@@ -104,13 +100,10 @@ jobs:
 
       - name: Resolve package version
         env:
-          EVENT_NAME: ${{ github.event_name }}
           INPUT_PACKAGE_VERSION: ${{ inputs.package_version }}
         run: |
           if [ -n "$INPUT_PACKAGE_VERSION" ]; then
             version="$INPUT_PACKAGE_VERSION"
-          elif [ "$EVENT_NAME" = "pull_request" ]; then
-            version="999.999"
           else
             version="$GITHUB_REF_NAME"
           fi
