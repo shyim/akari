@@ -3,19 +3,9 @@ name: Release
 on:
   push:
     tags: ["*"]
-  workflow_dispatch:
-    inputs:
-      package_version:
-        description: Version used in generated package names. Defaults to the ref name.
-        required: false
-        type: string
 
 permissions:
   contents: read
-
-env:
-  PHP_EXTENSION_BUILDER_VERSION: v0.1.0
-  ARTIFACT_DIR: dist
 
 jobs:
   build-linux:
@@ -33,29 +23,16 @@ jobs:
       - name: Clone
         uses: actions/checkout@v6.0.3
 
-      - name: Resolve package version
-        env:
-          INPUT_PACKAGE_VERSION: ${{ inputs.package_version }}
-        run: |
-          if [ -n "$INPUT_PACKAGE_VERSION" ]; then
-            version="$INPUT_PACKAGE_VERSION"
-          else
-            version="$GITHUB_REF_NAME"
-          fi
-
-          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
-
       - name: Install php-extension-builder
         uses: jaxxstorm/action-install-gh-release@v3.0.0
         with:
           repo: shyim/php-extension-builder
-          tag: ${{ env.PHP_EXTENSION_BUILDER_VERSION }}
           cache: enable
 
       - name: Build extension
         shell: bash
         run: |
-          mkdir -p "$ARTIFACT_DIR"
+          mkdir -p dist
 
           zts_args=()
           if [ "${{ matrix.thread-safety }}" = "zts" ]; then
@@ -63,20 +40,20 @@ jobs:
           fi
 
           php-extension-builder build \
-            --package-version "$PACKAGE_VERSION" \
+            --package-version "$GITHUB_REF_NAME" \
             --php-version "${{ matrix.php-version }}" \
             --libc "${{ matrix.libc }}" \
             --configure-flag "--enable-akari" \
             --apt-package libcurl4-openssl-dev \
             --apk-package curl-dev \
-            --out-dir "$ARTIFACT_DIR" \
+            --out-dir dist \
             "${zts_args[@]}"
 
       - name: Upload package
         uses: actions/upload-artifact@v7.0.1
         with:
           name: akari-php${{ matrix.php-version }}-linux-${{ matrix.libc }}-${{ matrix.thread-safety }}
-          path: ${{ env.ARTIFACT_DIR }}/*.zip
+          path: dist/*.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -98,18 +75,6 @@ jobs:
       - name: Clone
         uses: actions/checkout@v6.0.3
 
-      - name: Resolve package version
-        env:
-          INPUT_PACKAGE_VERSION: ${{ inputs.package_version }}
-        run: |
-          if [ -n "$INPUT_PACKAGE_VERSION" ]; then
-            version="$INPUT_PACKAGE_VERSION"
-          else
-            version="$GITHUB_REF_NAME"
-          fi
-
-          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
-
       - name: Setup PHP
         uses: shivammathur/setup-php@2.37.1
         with:
@@ -121,12 +86,11 @@ jobs:
         uses: jaxxstorm/action-install-gh-release@v3.0.0
         with:
           repo: shyim/php-extension-builder
-          tag: ${{ env.PHP_EXTENSION_BUILDER_VERSION }}
           cache: enable
 
       - name: Build extension
         run: |
-          mkdir -p "$ARTIFACT_DIR"
+          mkdir -p dist
 
           curl_prefix="$(brew --prefix curl)"
           export CPPFLAGS="-I${curl_prefix}/include"
@@ -134,17 +98,17 @@ jobs:
 
           php-extension-builder build \
             --target-os darwin \
-            --package-version "$PACKAGE_VERSION" \
+            --package-version "$GITHUB_REF_NAME" \
             --php-version "${{ matrix.php-version }}" \
             --php-config "$(command -v php-config)" \
             --configure-flag "--enable-akari" \
-            --out-dir "$ARTIFACT_DIR"
+            --out-dir dist
 
       - name: Upload package
         uses: actions/upload-artifact@v7.0.1
         with:
           name: akari-php${{ matrix.php-version }}-darwin-${{ matrix.target.arch }}-nts
-          path: ${{ env.ARTIFACT_DIR }}/*.zip
+          path: dist/*.zip
           if-no-files-found: error
           retention-days: 7
 
