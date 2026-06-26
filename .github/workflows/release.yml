@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Clone
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7.0.0
 
       - name: Install php-extension-builder
-        uses: jaxxstorm/action-install-gh-release@v3.0.0
+        uses: jaxxstorm/action-install-gh-release@25e24d2d23ae098373794ef1d6faecb48ee52da8 # ratchet:jaxxstorm/action-install-gh-release@v3.0.0
         with:
           repo: shyim/php-extension-builder
           cache: enable
@@ -50,7 +50,7 @@ jobs:
             "${zts_args[@]}"
 
       - name: Upload package
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # ratchet:actions/upload-artifact@v7.0.1
         with:
           name: akari-php${{ matrix.php-version }}-linux-${{ matrix.libc }}-${{ matrix.thread-safety }}
           path: dist/*.zip
@@ -73,17 +73,17 @@ jobs:
 
     steps:
       - name: Clone
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7.0.0
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@2.37.1
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # ratchet:shivammathur/setup-php@2.37.2
         with:
           php-version: ${{ matrix.php-version }}
           coverage: none
           extensions: curl, pdo, sqlite3, session, mbstring
 
       - name: Install php-extension-builder
-        uses: jaxxstorm/action-install-gh-release@v3.0.0
+        uses: jaxxstorm/action-install-gh-release@25e24d2d23ae098373794ef1d6faecb48ee52da8 # ratchet:jaxxstorm/action-install-gh-release@v3.0.0
         with:
           repo: shyim/php-extension-builder
           cache: enable
@@ -105,7 +105,7 @@ jobs:
             --out-dir dist
 
       - name: Upload package
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # ratchet:actions/upload-artifact@v7.0.1
         with:
           name: akari-php${{ matrix.php-version }}-darwin-${{ matrix.target.arch }}-nts
           path: dist/*.zip
@@ -125,7 +125,7 @@ jobs:
 
     steps:
       - name: Download packages
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # ratchet:actions/download-artifact@v8.0.1
         with:
           path: packages
 
@@ -137,7 +137,7 @@ jobs:
           ls -lah dist
 
       - name: Publish release
-        uses: softprops/action-gh-release@v3.0.0
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # ratchet:softprops/action-gh-release@v3.0.1
         with:
           files: |
             dist/*.zip

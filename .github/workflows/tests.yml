@@ -15,10 +15,10 @@ jobs:
     name: Go forwarder
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # ratchet:actions/setup-go@v6
         with:
           go-version-file: forwarder/go.mod
           cache-dependency-path: forwarder/go.sum
@@ -36,7 +36,7 @@ jobs:
         php: ["8.2", "8.3", "8.4", "8.5"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7
 
       - name: Install system dependencies
         run: |
@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y -qq libcurl4-openssl-dev
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # ratchet:shivammathur/setup-php@2.37.2
         with:
           php-version: "${{ matrix.php }}"
           coverage: none
@@ -95,13 +95,13 @@ jobs:
     name: "PHP 8.5 / macOS"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7
 
       - name: Install system dependencies
         run: brew install curl
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # ratchet:shivammathur/setup-php@2.37.2
         with:
           php-version: "8.5"
           coverage: none
@@ -141,7 +141,7 @@ jobs:
 
     services:
       redis:
-        image: redis:7-alpine
+        image: index.docker.io/library/redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99 # ratchet:redis:7-alpine
         ports:
           - 6379:6379
         options: >-
@@ -151,7 +151,7 @@ jobs:
           --health-retries 10
 
       mysql:
-        image: mysql:8.4
+        image: index.docker.io/library/mysql@sha256:d36d39a64cd12a5c1cc9e6aa2bfb5f8d4c81a2f6586e0a04a9ae13939db02209 # ratchet:mysql:8.4
         env:
           MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
           MYSQL_ROOT_HOST: "%"
@@ -164,12 +164,12 @@ jobs:
           --health-retries=12
 
       memcached:
-        image: memcached:1.6-alpine
+        image: index.docker.io/library/memcached@sha256:7381333da6d6ae06e02d8dfc87ee6f2c7cd0a19f7ba048d5efc538d2100e2208 # ratchet:memcached:1.6-alpine
         ports:
           - 11211:11211
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7
 
       - name: Install system dependencies
         run: |
@@ -177,7 +177,7 @@ jobs:
           sudo apt-get install -y -qq libcurl4-openssl-dev libmemcached-dev zlib1g-dev
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # ratchet:shivammathur/setup-php@2.37.2
         with:
           php-version: "8.5"
           coverage: none
@@ -250,16 +250,16 @@ jobs:
     runs-on: ubuntu-latest
     name: ASan / UBSan
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # ratchet:docker/setup-buildx-action@v4
 
       # Build the sanitizer image. The PHP-from-source stage is the slow part
       # (~several minutes); GHA layer caching keeps it warm across runs so it
       # only rebuilds when Dockerfile.asan or the PHP_VERSION arg changes.
       - name: Build ASan image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # ratchet:docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.asan
