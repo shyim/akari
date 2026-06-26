@@ -201,6 +201,34 @@ static void curl_setopt_side_effect(profiler_state_t *state, zend_execute_data *
     store_user_headers(handle_arg, value_arg);
 }
 
+/* ── Side-effect: track curl_setopt_array($ch, [CURLOPT_HTTPHEADER => [...]]) ──
+ *
+ * Symfony HttpClient (and other clients) set all options — including
+ * CURLOPT_HTTPHEADER — in a single curl_setopt_array() call rather than via
+ * individual curl_setopt() calls. Without this hook, get_user_headers() returns
+ * nothing on curl_exec, so inject_traceparent() installs an slist containing
+ * only the traceparent and clobbers the user's Content-Type (curl then defaults
+ * to application/x-www-form-urlencoded, which OpenSearch rejects with 406). */
+static void curl_setopt_array_side_effect(profiler_state_t *state, zend_execute_data *execute_data)
+{
+    (void)state;
+    if (!execute_data || !execute_data->func) return;
+
+    uint32_t num_args = ZEND_CALL_NUM_ARGS(execute_data);
+    if (num_args < 2) return;
+
+    zval *handle_arg = ZEND_CALL_ARG(execute_data, 1);
+    zval *options_arg = ZEND_CALL_ARG(execute_data, 2);
+
+    if (Z_TYPE_P(options_arg) != IS_ARRAY) return;
+
+    zval *headers = zend_hash_index_find(Z_ARRVAL_P(options_arg), CURLOPT_HTTPHEADER);
+    if (!headers || Z_TYPE_P(headers) != IS_ARRAY) return;
+
+    curl_headers_init();
+    store_user_headers(handle_arg, headers);
+}
+
 /* ── Registry callbacks ── */
 
 static void *curl_exec_pre(profiler_state_t *state, zend_execute_data *execute_data,
@@ -385,4 +413,5 @@ void hook_curl_register(hook_registry_t *reg)
         HOOK_TYPE_INTERNAL, SPAN_KIND_CLIENT, curl_multi_exec_pre, NULL);
 
     hook_register_side_effect(reg, "curl_setopt", curl_setopt_side_effect);
+    hook_register_side_effect(reg, "curl_setopt_array", curl_setopt_array_side_effect);
 }
