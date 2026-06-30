@@ -98,6 +98,14 @@ void profiler_mark_escaped_exceptions(profiler_state_t *state);
 
 void profiler_resolve_pdo_classes(void);
 
+/* ── #[Akari\Span] attribute support (defined in hook_attribute.c) ── */
+
+void hook_attribute_register_class(void);
+int hook_attribute_lookup(profiler_state_t *state, zend_execute_data *execute_data,
+                          const char **out_name, uint32_t *out_name_len,
+                          uint64_t *out_min_duration_ns);
+void hook_attribute_cache_free(profiler_state_t *state);
+
 /* ── curl lifecycle (defined in hook_curl.c) ── */
 
 void curl_propagation_rinit(void);

@@ -63,6 +63,7 @@ void profiler_minit(void)
 void profiler_free_state(void)
 {
     if (g_state) {
+        hook_attribute_cache_free(g_state);
         free(g_state->frames);
         free(g_state->spans);
         free(g_state->db_attrs);
@@ -202,6 +203,9 @@ void profiler_rshutdown(void)
     g_state->log_record_count = 0;
     g_state->log_records_sent = 0;
     g_state->log_overflow_warned = 0;
+
+    /* Free #[Akari\Span] attribute lookup cache */
+    hook_attribute_cache_free(g_state);
 
     /* Reset userland API state */
     g_state->tag_count = 0;

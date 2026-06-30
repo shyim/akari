@@ -70,6 +70,7 @@ typedef struct {
     int skip_span;            /* pre_hook requested to skip this span */
     int exported;             /* already shipped to forwarder */
     int is_manual;            /* userland-created span finalized at shutdown */
+    uint64_t min_duration_ns; /* per-span drop threshold (0 = none); used by #[Akari\Span] */
 } profiler_span_t;
 
 /* ── Database span attributes (PDO instrumentation) ── */
@@ -352,6 +353,10 @@ typedef struct profiler_state_s {
     /* Userland API: manual span tracking */
     int manual_spans[32];  /* span indices that are manually created */
     int manual_span_count;
+
+    /* #[Akari\Span] attribute lookup cache (HashTable*, op_array-keyed).
+     * void* to keep this header free of Zend includes. */
+    void *attr_cache;
 } profiler_state_t;
 
 /* ── API ── */
