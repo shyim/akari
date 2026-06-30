@@ -12,6 +12,11 @@
   <a href="https://github.com/shyim/akari/actions/workflows/tests.yml"><img src="https://github.com/shyim/akari/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/shyim/akari/actions/workflows/docker.yml"><img src="https://github.com/shyim/akari/actions/workflows/docker.yml/badge.svg" alt="Docker"></a>
   <a href="https://github.com/shyim/akari/pkgs/container/akari%2Fakari-forwarder"><img src="https://img.shields.io/badge/container-ghcr.io-blue" alt="Container"></a>
+  <a href="https://shyim.github.io/akari/"><img src="https://img.shields.io/badge/docs-zensical-amber" alt="Documentation"></a>
+</p>
+
+<p align="center">
+  📖 <strong><a href="https://shyim.github.io/akari/">Read the documentation</a></strong>
 </p>
 
 ---
