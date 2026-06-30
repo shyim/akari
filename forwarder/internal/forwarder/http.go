@@ -13,12 +13,15 @@ import (
 // HTTPForwarder sends OTLP JSON payloads to an HTTP endpoint.
 type HTTPForwarder struct {
 	endpoint string
+	headers  map[string]string
 	client   *http.Client
 }
 
 // NewHTTP creates a new HTTPForwarder targeting the given OTLP HTTP endpoint.
-// The endpoint should be the base URL (e.g. "http://localhost:4318").
-func NewHTTP(endpoint string) *HTTPForwarder {
+// The endpoint should be the base URL (e.g. "http://localhost:4318"). The
+// optional headers are added to every outgoing request (e.g. for
+// authentication via OTEL_EXPORTER_OTLP_HEADERS).
+func NewHTTP(endpoint string, headers map[string]string) *HTTPForwarder {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   5 * time.Second,
@@ -31,6 +34,7 @@ func NewHTTP(endpoint string) *HTTPForwarder {
 
 	return &HTTPForwarder{
 		endpoint: endpoint,
+		headers:  headers,
 		client: &http.Client{
 			Transport: transport,
 			Timeout:   10 * time.Second,
@@ -52,6 +56,9 @@ func (f *HTTPForwarder) Forward(ctx context.Context, payload []byte, signal Sign
 		return fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range f.headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := f.client.Do(req)
 	if err != nil {

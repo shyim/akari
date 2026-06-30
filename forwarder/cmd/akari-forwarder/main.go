@@ -23,16 +23,24 @@ func main() {
 	batchSize := envOrDefaultInt("OTEL_FORWARDER_BATCH_SIZE", 64)
 	flushInterval := envOrDefaultDuration("OTEL_FORWARDER_FLUSH_INTERVAL", 100*time.Millisecond)
 
+	headers, err := forwarder.ParseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"))
+	if err != nil {
+		log.Fatalf("invalid OTEL_EXPORTER_OTLP_HEADERS: %v", err)
+	}
+
 	log.Printf("akari-forwarder starting")
 	log.Printf("  listen:   %s (UDP)", listenAddr)
 	log.Printf("  endpoint: %s (HTTP/JSON)", otlpEndpoint)
 	log.Printf("  buffer:   %d slots", bufferSize)
 	log.Printf("  batch:    %d max, flush every %s", batchSize, flushInterval)
+	if len(headers) > 0 {
+		log.Printf("  headers:  %d configured", len(headers))
+	}
 
 	// Create components.
 	buf := buffer.New(bufferSize)
 	recv := receiver.New(listenAddr, buf)
-	fwd := forwarder.NewHTTP(otlpEndpoint)
+	fwd := forwarder.NewHTTP(otlpEndpoint, headers)
 
 	// Set up signal-based shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
