@@ -47,3 +47,21 @@ function generateDistributedTracingHeaders(): array {}
 function markAsWebTransaction(): void {}
 
 function markAsCliTransaction(): void {}
+
+/**
+ * Marks a method or function so that akari creates a span for every call
+ * while profiling is active.
+ *
+ *   #[Akari\Span]                              span named "Class::method"
+ *   #[Akari\Span(name: "work")]                span named "work"
+ *   #[Akari\Span(minDurationMs: 5.0)]          drop spans shorter than 5ms
+ */
+#[\Attribute(\Attribute::TARGET_METHOD | \Attribute::TARGET_FUNCTION)]
+final class Span
+{
+    public ?string $name;
+
+    public float $minDurationMs;
+
+    public function __construct(?string $name = null, float $minDurationMs = 0.0) {}
+}

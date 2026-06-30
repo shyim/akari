@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: ace0fa21fc977e7d8608ca849a682dd081dcc000 */
+ * Stub hash: 79cdcb60c6966816bd10bf35ed239f709e05a97f */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_Akari_enable, 0, 0, _IS_BOOL, 0)
 ZEND_END_ARG_INFO()
@@ -66,6 +66,11 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_Akari_markAsCliTransaction arginfo_Akari_markAsWebTransaction
 
+ZEND_BEGIN_ARG_INFO_EX(arginfo_class_Akari_Span___construct, 0, 0, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, name, IS_STRING, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, minDurationMs, IS_DOUBLE, 0, "0.0")
+ZEND_END_ARG_INFO()
+
 ZEND_FUNCTION(Akari_enable);
 ZEND_FUNCTION(Akari_disable);
 #if defined(AKARI_DEBUG_INTROSPECTION)
@@ -88,6 +93,7 @@ ZEND_FUNCTION(Akari_log);
 ZEND_FUNCTION(Akari_generateDistributedTracingHeaders);
 ZEND_FUNCTION(Akari_markAsWebTransaction);
 ZEND_FUNCTION(Akari_markAsCliTransaction);
+ZEND_METHOD(Akari_Span, __construct);
 
 static const zend_function_entry ext_functions[] = {
 #if (PHP_VERSION_ID >= 80400)
@@ -192,5 +198,10 @@ static const zend_function_entry ext_functions[] = {
 #else
 	ZEND_RAW_FENTRY(ZEND_NS_NAME("Akari", "markAsCliTransaction"), zif_Akari_markAsCliTransaction, arginfo_Akari_markAsCliTransaction, 0)
 #endif
+	ZEND_FE_END
+};
+
+static const zend_function_entry class_Akari_Span_methods[] = {
+	ZEND_ME(Akari_Span, __construct, arginfo_class_Akari_Span___construct, ZEND_ACC_PUBLIC)
 	ZEND_FE_END
 };

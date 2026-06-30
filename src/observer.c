@@ -93,6 +93,7 @@ static size_t create_span_entry(profiler_state_t *state, zend_execute_data *exec
     span->pre_data = NULL;
     span->skip_span = 0;
     span->exported = 0;
+    span->min_duration_ns = 0;
 
     if (has_stack_parent) {
         memcpy(span->parent_span_id, state->spans[parent_span_idx].span_id, 16);
@@ -187,11 +188,22 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
     hook_entry_t *hook = hook_registry_find(&g_hook_registry, AKARI_G(ce_cache), execute_data, hook_type);
 
 
-    /* Filtering: only registered hooks produce spans. Unregistered calls
-     * push a sentinel so fcall_end still pops cleanly. */
+    /* Filtering: only registered hooks produce spans. Unregistered userland
+     * calls get one more chance: an #[Akari\Span] attribute. Anything else
+     * pushes a sentinel so fcall_end still pops cleanly. */
+    const char *attr_name = NULL;
+    uint32_t attr_name_len = 0;
+    uint64_t attr_min_duration_ns = 0;
+    int attr_span = 0;
     if (!hook) {
-        stack_push(state, (size_t)-1);
-        return;
+        if (is_userland) {
+            attr_span = hook_attribute_lookup(state, execute_data, &attr_name,
+                                              &attr_name_len, &attr_min_duration_ns);
+        }
+        if (!attr_span) {
+            stack_push(state, (size_t)-1);
+            return;
+        }
     }
 
     if (!ensure_span_capacity(state)) {
@@ -200,6 +212,20 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
     }
 
     size_t span_idx = create_span_entry(state, execute_data, hook);
+
+    /* Attribute spans carry an optional custom name and per-span threshold;
+     * otherwise create_span_entry already derived "Class::method". */
+    if (attr_span) {
+        profiler_span_t *s = &state->spans[span_idx];
+        if (attr_name && attr_name_len > 0) {
+            uint32_t n = attr_name_len;
+            if (n >= SPAN_NAME_OVERRIDE_MAX) n = SPAN_NAME_OVERRIDE_MAX - 1;
+            memcpy(s->name_override, attr_name, n);
+            s->name_override[n] = '\0';
+            s->name_override_len = n;
+        }
+        s->min_duration_ns = attr_min_duration_ns;
+    }
 
     /* Run pre-hook (records attributes, may request transparent skip) */
     if (hook && hook->pre_hook) {
@@ -274,6 +300,17 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
     if (span->skip_span) {
         undo_span(state, span_idx);
         return;
+    }
+
+    /* Per-span threshold (set by #[Akari\Span(minDurationMs:)]): drop spans
+     * shorter than the requested duration. Attribute spans have no hook, so
+     * this is enforced on the span itself rather than via the registry. */
+    if (span->min_duration_ns > 0) {
+        uint64_t duration = span->end_time_ns - span->start_time_ns;
+        if (duration < span->min_duration_ns) {
+            undo_span(state, span_idx);
+            return;
+        }
     }
 
     /* Re-lookup the hook for threshold check */

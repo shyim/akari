@@ -675,6 +675,7 @@ PHP_MINIT_FUNCTION(akari)
 {
     REGISTER_INI_ENTRIES();
     profiler_minit();
+    hook_attribute_register_class();
     udp_export_init(AKARI_G(udp_host), (int)AKARI_G(udp_port));
     engine_hooks_init(AKARI_G(trace_compile), AKARI_G(trace_gc));
     return SUCCESS;
