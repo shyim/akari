@@ -257,6 +257,7 @@ echo getLogsJson();     // OTLP logs JSON for debugging
 | Env Variable | Default | Description |
 |-------------|---------|-------------|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Collector endpoint |
+| `OTEL_EXPORTER_OTLP_HEADERS` | _(none)_ | Comma-separated `key=value` headers added to every request (e.g. `api-key=secret`); values are percent-decoded |
 | `OTEL_FORWARDER_LISTEN` | `127.0.0.1:4319` | UDP listen address |
 | `OTEL_FORWARDER_BUFFER_SIZE` | `16384` | Max queued payloads |
 | `OTEL_FORWARDER_BATCH_SIZE` | `64` | Payloads per flush |
