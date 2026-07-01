@@ -17,7 +17,7 @@ your OTLP collector over HTTP. Spans go to `/v1/traces`; log records go to
     docker run -d --name akari-forwarder \
       -p 4319:4319/udp \
       -e OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
-      ghcr.io/shyim/akari/akari-forwarder:main
+      ghcr.io/shyim/akari/akari-forwarder:latest
     ```
 
 === "From source"

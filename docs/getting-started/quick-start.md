@@ -15,17 +15,24 @@ The forwarder is published as a container image on GHCR:
 docker run -d --name akari-forwarder \
   -p 4319:4319/udp \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
-  ghcr.io/shyim/akari/akari-forwarder:main
+  ghcr.io/shyim/akari/akari-forwarder:latest
 ```
 
 This listens for spans on UDP `4319` and forwards them to the collector at
 `OTEL_EXPORTER_OTLP_ENDPOINT`. See [Forwarder](../reference/forwarder.md) for
 the full list of environment variables.
 
-## 2. Enable the extension
+## 2. Install & enable the extension
 
-Add Akari to your `php.ini` (see [Installation](installation.md) for how to
-build `akari.so`):
+Install Akari with [PIE](https://github.com/php/pie), the PHP Installer for
+Extensions:
+
+```bash
+pie install shyim/akari
+```
+
+Then enable it in your `php.ini` (see [Installation](installation.md) for
+building from source instead):
 
 ```ini
 extension=akari.so

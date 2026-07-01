@@ -98,5 +98,5 @@ echo getSpansJson();    // OTLP traces JSON for debugging
 echo getLogsJson();     // OTLP logs JSON for debugging
 ```
 
-See [Installation](../getting-started/installation.md#1-build-the-extension)
+See [Installation](../getting-started/installation.md#debug-builds)
 for how to enable debug builds.
