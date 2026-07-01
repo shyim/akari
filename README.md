@@ -12,6 +12,11 @@
   <a href="https://github.com/shyim/akari/actions/workflows/tests.yml"><img src="https://github.com/shyim/akari/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/shyim/akari/actions/workflows/docker.yml"><img src="https://github.com/shyim/akari/actions/workflows/docker.yml/badge.svg" alt="Docker"></a>
   <a href="https://github.com/shyim/akari/pkgs/container/akari%2Fakari-forwarder"><img src="https://img.shields.io/badge/container-ghcr.io-blue" alt="Container"></a>
+  <a href="https://shyim.github.io/akari/"><img src="https://img.shields.io/badge/docs-zensical-amber" alt="Documentation"></a>
+</p>
+
+<p align="center">
+  📖 <strong><a href="https://shyim.github.io/akari/">Read the documentation</a></strong>
 </p>
 
 ---
@@ -42,7 +47,17 @@ Spans are serialized as compact msgpack and sent via UDP to a local Go forwarder
 
 ## Quick Start
 
-### Docker (recommended)
+### Install the extension (recommended)
+
+Install Akari with [PIE](https://github.com/php/pie), the PHP Installer for Extensions:
+
+```bash
+pie install shyim/akari
+```
+
+Then enable it in your `php.ini` (see [Configure](#3-configure) below).
+
+### Run the forwarder (Docker)
 
 The forwarder is available as a container image:
 
@@ -50,7 +65,7 @@ The forwarder is available as a container image:
 docker run -d --name akari-forwarder \
   -p 4319:4319/udp \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 \
-  ghcr.io/shyim/akari/akari-forwarder:main
+  ghcr.io/shyim/akari/akari-forwarder:latest
 ```
 
 ### Build from source

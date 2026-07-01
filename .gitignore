@@ -53,6 +53,10 @@ forwarder/cmd/otel-forwarder/otel-forwarder
 *.swo
 *~
 
+# Zensical docs build output
+site/
+.zensical/
+
 # OS
 .DS_Store
 Thumbs.db
