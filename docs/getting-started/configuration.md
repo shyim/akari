@@ -23,7 +23,7 @@ configured separately through environment variables — see
 | `akari.trace_gc` | `0` | Profile GC collect cycles time |
 | `akari.trace_cli` | `1` | Auto-create a root span for CLI runs, named after the command (e.g. `php console asset:install`, using the script basename). The full command line is recorded as the `process.command_line` attribute. Disable to skip the entry span unless `markAsWebTransaction()` is called |
 | `akari.flush_threshold` | `4096` | Completed spans buffered before a mid-request flush |
-| `akari.traces_sampler` | *(empty)* | Trace sampler. When unset, falls back to the `OTEL_TRACES_SAMPLER` env var, then to `always_on`. See [Sampling](#sampling) |
+| `akari.traces_sampler` | *(empty)* | Trace sampler. When unset, falls back to the `OTEL_TRACES_SAMPLER` env var, then to `parentbased_always_on`. See [Sampling](#sampling) |
 | `akari.traces_sampler_arg` | *(empty)* | Ratio for the `traceidratio` samplers (`0.0`–`1.0`). When unset, falls back to `OTEL_TRACES_SAMPLER_ARG`, then to `1.0` |
 
 !!! info "Targeted, APM-style instrumentation"
@@ -65,10 +65,10 @@ values:
 
 | Sampler | Decision |
 |---------|----------|
-| `always_on` *(default)* | Trace every request |
+| `always_on` | Trace every request |
 | `always_off` | Trace nothing |
 | `traceidratio` | Trace a deterministic fraction of requests, derived from the trace id (`akari.traces_sampler_arg` = ratio, e.g. `0.1`) |
-| `parentbased_always_on` | Follow the incoming `traceparent` sampled flag; trace when there is no parent |
+| `parentbased_always_on` *(default)* | Follow the incoming `traceparent` sampled flag; trace when there is no parent |
 | `parentbased_always_off` | Follow the incoming `traceparent` sampled flag; drop when there is no parent |
 | `parentbased_traceidratio` | Follow the incoming `traceparent` sampled flag; apply the ratio when there is no parent |
 
@@ -90,14 +90,18 @@ trace id's random bits, so services sharing a trace reach the same verdict.
     Requests arriving with `traceparent: 00-…-…-01` are traced; requests with
     the sampled flag unset (`…-00`) or without a `traceparent` header are not.
 
-!!! note "Differences from the OTel SDK"
+!!! warning "Requests carrying an unsampled traceparent are dropped"
 
-    - The default is `always_on` (trace everything), matching Akari's
-      behavior before samplers existed — not the SDK default
-      `parentbased_always_on`.
-    - Unsampled requests do not forward the trace context downstream: no
-      hooks run, so no `traceparent` header (with the sampled flag cleared)
-      is injected into outbound calls.
+    The default sampler follows the W3C sampled flag: a request arriving with
+    `traceparent: 00-…-…-00` is **not** traced. If an upstream proxy sends
+    unsampled trace context and you want to trace everything anyway, set
+    `akari.traces_sampler=always_on`.
+
+!!! note "Difference from the OTel SDK"
+
+    Unsampled requests do not forward the trace context downstream: no hooks
+    run, so no `traceparent` header (with the sampled flag cleared) is
+    injected into outbound calls.
 
 ## Tuning notes
 

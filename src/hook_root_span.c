@@ -393,10 +393,9 @@ static const char *sampler_mode_names[] = {
 };
 
 /* Resolve the sampler: akari.traces_sampler INI when set, else the
- * OTEL_TRACES_SAMPLER env var, else always_on (trace everything — Akari's
- * behavior before samplers existed; note the OTel SDK default would be
- * parentbased_always_on). An unrecognized name warns and falls back to
- * always_on so a typo degrades to "everything traced", never to silence. */
+ * OTEL_TRACES_SAMPLER env var, else parentbased_always_on (the OTel SDK
+ * default: follow the parent's sampled flag, trace root requests). An
+ * unrecognized name warns and falls back to that same default. */
 static akari_sampler_mode_t resolve_sampler(double *ratio_out)
 {
     const char *name = AKARI_G(traces_sampler);
@@ -418,7 +417,7 @@ static akari_sampler_mode_t resolve_sampler(double *ratio_out)
     *ratio_out = ratio;
 
     if (!name || !name[0]) {
-        return AKARI_SAMPLER_ALWAYS_ON;
+        return AKARI_SAMPLER_PARENTBASED_ALWAYS_ON;
     }
     for (size_t i = 0; i < sizeof(sampler_mode_names) / sizeof(sampler_mode_names[0]); i++) {
         if (strcmp(name, sampler_mode_names[i]) == 0) {
@@ -426,8 +425,8 @@ static akari_sampler_mode_t resolve_sampler(double *ratio_out)
         }
     }
     php_error_docref(NULL, E_WARNING,
-                     "unsupported traces sampler \"%s\", falling back to always_on", name);
-    return AKARI_SAMPLER_ALWAYS_ON;
+                     "unsupported traces sampler \"%s\", falling back to parentbased_always_on", name);
+    return AKARI_SAMPLER_PARENTBASED_ALWAYS_ON;
 }
 
 const char *akari_sampler_effective_name(void)

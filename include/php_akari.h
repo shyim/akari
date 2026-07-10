@@ -39,7 +39,7 @@ ZEND_BEGIN_MODULE_GLOBALS(akari)
     zend_long flush_threshold;
     /* Trace sampler (OTel OTEL_TRACES_SAMPLER semantics). Empty INI falls back
      * to the OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG env vars, then to
-     * always_on (trace every request — the pre-sampler behavior). */
+     * parentbased_always_on (the OTel SDK default). */
     char *traces_sampler;
     char *traces_sampler_arg;
     /* Per-request profiler state; NULL until profiler_init() for the request. */

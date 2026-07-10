@@ -1,5 +1,5 @@
 --TEST--
-Sampler: an unrecognized sampler name warns and falls back to always_on
+Sampler: an unrecognized sampler name warns and falls back to parentbased_always_on
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
@@ -12,5 +12,5 @@ usleep(1);
 echo 'spans: ' . (Akari\getSpansJson() === false ? 'none' : 'some') . "\n";
 ?>
 --EXPECTF--
-Warning: PHP Request Startup: unsupported traces sampler "jaeger_remote", falling back to always_on in %s on line %d
+Warning: PHP Request Startup: unsupported traces sampler "jaeger_remote", falling back to parentbased_always_on in %s on line %d
 spans: some

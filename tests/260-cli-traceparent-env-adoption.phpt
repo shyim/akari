@@ -9,9 +9,9 @@ akari.enable=1
 akari.trace_cli=1
 --FILE--
 <?php
-// Default sampler (always_on): the request is traced regardless of the parent
-// flag, but the trace id and parent span id from TRACEPARENT are adopted so
-// the CLI run links into the calling trace.
+// Default sampler (parentbased_always_on) with a sampled parent: the request
+// is traced, and the trace id and parent span id from TRACEPARENT are adopted
+// so the CLI run links into the calling trace.
 $headers = Akari\generateDistributedTracingHeaders();
 $parts = explode('-', $headers['traceparent']);
 echo 'traceId adopted: ' . ($parts[1] === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ? 'yes' : 'no') . "\n";
