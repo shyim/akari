@@ -24,6 +24,8 @@ PHP_INI_BEGIN()
     STD_PHP_INI_BOOLEAN("akari.trace_gc", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_gc, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_cli", "1", PHP_INI_SYSTEM, OnUpdateBool, trace_cli, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.flush_threshold", "4096", PHP_INI_SYSTEM, OnUpdateLong, flush_threshold, zend_akari_globals, akari_globals)
+    STD_PHP_INI_ENTRY("akari.traces_sampler", "", PHP_INI_SYSTEM, OnUpdateString, traces_sampler, zend_akari_globals, akari_globals)
+    STD_PHP_INI_ENTRY("akari.traces_sampler_arg", "", PHP_INI_SYSTEM, OnUpdateString, traces_sampler_arg, zend_akari_globals, akari_globals)
 PHP_INI_END()
 
 static PHP_GINIT_FUNCTION(akari)
@@ -43,6 +45,8 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->trace_gc = 0;
     akari_globals->trace_cli = 1;
     akari_globals->flush_threshold = PROFILER_FLUSH_THRESHOLD;
+    akari_globals->traces_sampler = NULL;
+    akari_globals->traces_sampler_arg = NULL;
     /* Per-request/per-thread pointers: created lazily during a request, must
      * start NULL so the lazy-init checks fire and so a thread that never
      * profiles leaves them NULL for shutdown to skip. */
@@ -643,7 +647,9 @@ ZEND_FUNCTION(Akari_markAsWebTransaction)
 {
     ZEND_PARSE_PARAMETERS_NONE();
     profiler_state_t *state = profiler_get_state();
-    if (state) {
+    /* Inactive state means the request was dropped (sampler) or disabled —
+     * don't resurrect the root span, it would never be exported. */
+    if (state && state->active) {
         promote_root_to_web(state);
     }
 }
@@ -787,7 +793,7 @@ PHP_MINFO_FUNCTION(akari)
     php_info_print_table_row(2, "Stack Trace Capture", "enabled");
     php_info_print_table_row(2, "SQL Normalization", "enabled");
     php_info_print_table_row(2, "W3C Trace Context", "enabled");
-    php_info_print_table_row(2, "Sampling Mode", "enabled");
+    php_info_print_table_row(2, "Traces Sampler", akari_sampler_effective_name());
     php_info_print_table_row(2, "Userland API", "enabled");
     php_info_print_table_end();
 

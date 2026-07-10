@@ -81,6 +81,19 @@ Inbound `traceparent` headers on HTTP requests are picked up automatically by
 the root-span hook, so manual propagation is only needed for protocols Akari
 does not already instrument.
 
+CLI processes have no HTTP headers; they read the trace context from the
+`TRACEPARENT` environment variable instead (the W3C convention for process
+propagation), so a traced service that shells out can pass its context along:
+
+```php
+$headers = Akari\generateDistributedTracingHeaders();
+$proc = proc_open(['php', 'bin/console', 'app:work'], $spec, $pipes, null,
+    ['TRACEPARENT' => $headers['traceparent']] + getenv());
+```
+
+The incoming context also drives the `parentbased_*` samplers — see
+[Sampling](../getting-started/configuration.md#sampling).
+
 ## Debug introspection (debug builds only)
 
 These functions are compiled in **only** when the extension is built with

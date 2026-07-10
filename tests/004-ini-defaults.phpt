@@ -12,6 +12,8 @@ echo 'event_dispatch_min_duration_ms: ' . ini_get('akari.event_dispatch_min_dura
 echo 'udp_host: ' . ini_get('akari.udp_host') . "\n";
 echo 'udp_port: ' . ini_get('akari.udp_port') . "\n";
 echo 'trace_cli: ' . ini_get('akari.trace_cli') . "\n";
+echo 'traces_sampler: [' . ini_get('akari.traces_sampler') . "]\n";
+echo 'traces_sampler_arg: [' . ini_get('akari.traces_sampler_arg') . "]\n";
 ?>
 --EXPECT--
 enable: 0
@@ -22,3 +24,5 @@ event_dispatch_min_duration_ms: 1
 udp_host: 127.0.0.1
 udp_port: 4319
 trace_cli: 1
+traces_sampler: []
+traces_sampler_arg: []

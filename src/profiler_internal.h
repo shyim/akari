@@ -164,4 +164,12 @@ void init_root_span(profiler_state_t *state);
 void promote_root_to_web(profiler_state_t *state);
 void finalize_root_span(profiler_state_t *state);
 
+/* ── Trace sampling (defined in hook_root_span.c) ──
+ * Evaluates the configured sampler (akari.traces_sampler INI, falling back to
+ * the OTEL_TRACES_SAMPLER env var) against the request's trace context. Called
+ * once per request after init_root_span; returns 0 to drop the request. */
+int akari_sampling_decide(profiler_state_t *state);
+/* Effective sampler name after INI/env resolution (for phpinfo). */
+const char *akari_sampler_effective_name(void);
+
 #endif /* PROFILER_INTERNAL_H */
