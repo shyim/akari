@@ -31,6 +31,15 @@ ZEND_BEGIN_MODULE_GLOBALS(akari)
     zend_long max_depth;
     double min_duration_ms;
     double event_dispatch_min_duration_ms;
+    /* Head sampling rate [0.0, 1.0]. 1.0 (default) traces every request in full;
+     * lower values collect the full child-span tree for that fraction of
+     * requests while still emitting the root span + per-layer summary for the
+     * rest ("keep-frame"). An inbound traceparent sampled flag overrides this. */
+    double sample_rate;
+    /* Safety kill-switch: if peak memory usage exceeds this percentage of
+     * memory_limit at request start, profiling is skipped for the request so the
+     * APM never contributes to an OOM. 0 (default) disables the check. */
+    double disable_at_memory_percentage;
     char *udp_host;
     zend_long udp_port;
     zend_bool trace_compile;

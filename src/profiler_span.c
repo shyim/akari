@@ -31,6 +31,11 @@ static uint64_t xorshift64(profiler_state_t *state)
     return x;
 }
 
+uint64_t profiler_random_u64(profiler_state_t *state)
+{
+    return xorshift64(state);
+}
+
 void profiler_generate_hex_id(profiler_state_t *state, char *buf, size_t len)
 {
     static const char hex[] = "0123456789abcdef";

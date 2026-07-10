@@ -90,6 +90,7 @@ typedef struct {
     /* Hook type */
     int hook_type;            /* HOOK_TYPE_INTERNAL or HOOK_TYPE_USERLAND */
     uint8_t span_kind;        /* SPAN_KIND_* for the created span */
+    uint8_t layer;            /* AKARI_LAYER_* for time attribution */
 
     /* Wildcard filter (only used when method_name is "*") */
     hook_method_filter_fn method_filter;
@@ -137,6 +138,12 @@ typedef struct {
     /* Hash tables for O(1) dispatch (keyed by "type:class::method" or "type:function") */
     HashTable *hook_map;
     HashTable *side_map;
+
+    /* Layer stamped onto every hook entry registered while this is set. Set by
+     * init_hook_registry() around each hook_*_register() call so a whole module's
+     * hooks share a layer without touching 200+ individual registration sites.
+     * Defaults to AKARI_LAYER_APP (0). */
+    uint8_t default_layer;
 } hook_registry_t;
 
 /* ── Per-thread, per-request resolved-class-entry cache ──
