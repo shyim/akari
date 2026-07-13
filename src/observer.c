@@ -29,6 +29,55 @@
 static void observer_fcall_begin(zend_execute_data *execute_data);
 static void observer_fcall_end(zend_execute_data *execute_data, zval *return_value);
 
+/* ── Layer attribution ──
+ *
+ * A lightweight stack, independent of the span stack, that charges EXCLUSIVE
+ * (self) wall-time to each layer. Only non-APP (infrastructure) operations push
+ * a frame; APP time is derived at finalize as the root duration minus the sum of
+ * all non-APP layer time. This keeps plain userland calls off the layer path
+ * entirely (zero added cost) while still producing a full "where did the time
+ * go" breakdown — and it works the same whether or not the request is sampled,
+ * since it never touches spans.
+ *
+ * A frame is pushed on EVERY observed call (APP included) and popped on every
+ * return, so it pairs 1:1 with fcall_begin/end with no bookkeeping. On physical
+ * overflow the push is dropped and counted; layer_pop consumes that counter
+ * first, exactly mirroring the span stack's overflow discipline. Self-time is
+ * only summed for non-APP layers — APP is derived as the remainder at finalize —
+ * but APP frames are still pushed so nesting depth (and child_ns accounting)
+ * stays correct. */
+static inline void layer_push(profiler_state_t *state, uint8_t layer, uint64_t now_ns)
+{
+    if (state->layer_stack_depth >= PROFILER_LAYER_STACK_MAX) {
+        state->layer_stack_overflow++;
+        return;
+    }
+    profiler_layer_frame_t *f = &state->layer_stack[state->layer_stack_depth++];
+    f->layer = layer;
+    f->start_ns = now_ns;
+    f->child_ns = 0;
+}
+
+static inline void layer_pop(profiler_state_t *state, uint64_t now_ns)
+{
+    if (state->layer_stack_overflow > 0) {
+        state->layer_stack_overflow--;
+        return;
+    }
+    if (state->layer_stack_depth == 0) return;
+    profiler_layer_frame_t *f = &state->layer_stack[--state->layer_stack_depth];
+    uint64_t inclusive = (now_ns > f->start_ns) ? (now_ns - f->start_ns) : 0;
+    /* Charge our inclusive time to the enclosing op so its self-time excludes us
+     * (prevents double-counting nested calls), regardless of either layer. */
+    if (state->layer_stack_depth > 0) {
+        state->layer_stack[state->layer_stack_depth - 1].child_ns += inclusive;
+    }
+    if (f->layer == AKARI_LAYER_APP || f->layer >= AKARI_LAYER_MAX) return;
+    uint64_t self = (inclusive > f->child_ns) ? (inclusive - f->child_ns) : 0;
+    state->layers.wall_ns[f->layer] += self;
+    state->layers.count[f->layer]++;
+}
+
 /* ── Stack helper: safe push with bounds check ── */
 
 static inline void stack_push(profiler_state_t *state, size_t value)
@@ -163,15 +212,22 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
 {
     profiler_state_t *state = g_state;
 
-    /* Defensive: init already checked, but be safe. */
-    if (!state || !state->active || state->stack_depth >= state->max_depth
-        || !execute_data->func) {
-        /* If profiling is active but we're at max depth or no func,
-         * push a sentinel so fcall_end doesn't corrupt the stack.
-         * stack_push handles physical overflow via overflow counter. */
-        if (state && state->active) {
-            stack_push(state, (size_t)-1);
-        }
+    if (!state || !state->active) return;
+
+    uint64_t now_ns = realtime_ns();
+
+    /* Push a layer frame for EVERY observed call so it pairs 1:1 with fcall_end
+     * (which pops unconditionally). The frame starts as APP; the hook lookup
+     * below upgrades it to the operation's real layer. This runs before any
+     * early return and independently of sampling, so the per-request layer
+     * summary is built even on non-sampled ("keep-frame") requests and even for
+     * frames past max_depth. */
+    layer_push(state, AKARI_LAYER_APP, now_ns);
+
+    /* Defensive: max depth or no func → sentinel, no span. Layer frame already
+     * pushed (stays APP); fcall_end pops it. */
+    if (state->stack_depth >= state->max_depth || !execute_data->func) {
+        stack_push(state, (size_t)-1);
         return;
     }
 
@@ -187,6 +243,12 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
     int hook_type = is_userland ? HOOK_TYPE_USERLAND : HOOK_TYPE_INTERNAL;
     hook_entry_t *hook = hook_registry_find(&g_hook_registry, AKARI_G(ce_cache), execute_data, hook_type);
 
+    /* Upgrade the layer frame from APP to this operation's real layer (db, cache,
+     * http, …). A hooked call carries its module's layer; un-hooked userland and
+     * #[Akari\Span] frames stay APP (derived as the remainder at finalize). */
+    if (hook && state->layer_stack_overflow == 0 && state->layer_stack_depth > 0) {
+        state->layer_stack[state->layer_stack_depth - 1].layer = hook->layer;
+    }
 
     /* Filtering: only registered hooks produce spans. Unregistered userland
      * calls get one more chance: an #[Akari\Span] attribute. Anything else
@@ -204,6 +266,13 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
             stack_push(state, (size_t)-1);
             return;
         }
+    }
+
+    /* Non-sampled ("keep-frame") requests still account layer time (above) but
+     * do not build the child-span tree. Emit a sentinel so pairing holds. */
+    if (!state->sampled) {
+        stack_push(state, (size_t)-1);
+        return;
     }
 
     if (!ensure_span_capacity(state)) {
@@ -270,6 +339,12 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
 
     if (!state || !state->active) return;
 
+    /* Close the layer frame first — fcall_begin pushed one for EVERY call, so
+     * this pops exactly once per invocation, before any early return below.
+     * now_ns is reused as the span end time to avoid a second clock read. */
+    uint64_t now_ns = realtime_ns();
+    layer_pop(state, now_ns);
+
     /* If pushes were dropped due to stack overflow, skip the corresponding
      * pop to maintain 1:1 begin/end pairing. The frame still unwound, so
      * resolve exceptions first — otherwise a throw escaping through an
@@ -294,7 +369,7 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
     if (span_idx >= state->span_count) return;
 
     profiler_span_t *span = &state->spans[span_idx];
-    span->end_time_ns = realtime_ns();
+    span->end_time_ns = now_ns;
 
     /* Handle skip_span (pre_hook returned skip marker) */
     if (span->skip_span) {

@@ -17,6 +17,52 @@
 #define PROFILER_EVENT_DISPATCH_STACK_MAX 64
 #define PROFILER_EVENT_NAME_MAX 256
 
+/* ── Layers ──
+ *
+ * Every span is attributed to exactly one layer for the always-on "where did
+ * the time go" summary. Per-layer wall-time + call counts accumulate on the
+ * root span (see profiler_layer_totals_t) and are exported on EVERY request —
+ * sampled or not — so a non-sampled ("keep-frame") request still yields
+ * aggregate APM metrics. The set is intentionally small and fixed so the
+ * accumulator is a flat array indexed by AKARI_LAYER_*. APP is the catch-all
+ * for un-hooked userland and #[Akari\Span] frames. */
+#define AKARI_LAYER_APP        0   /* userland application code (default) */
+#define AKARI_LAYER_DB         1   /* SQL: PDO, mysqli, sqlite, oci8, pgsql */
+#define AKARI_LAYER_CACHE      2   /* Redis, Memcached, Predis, APCu */
+#define AKARI_LAYER_HTTP       3   /* outbound HTTP: curl, streams, soap */
+#define AKARI_LAYER_TEMPLATE   4   /* Twig and other template engines */
+#define AKARI_LAYER_MESSAGING  5   /* AMQP, Kafka, Beanstalkd */
+#define AKARI_LAYER_SEARCH     6   /* Elasticsearch */
+#define AKARI_LAYER_COMPILE    7   /* file compilation */
+#define AKARI_LAYER_GC         8   /* garbage collection */
+#define AKARI_LAYER_IO         9   /* filesystem, DNS, shell, mail */
+#define AKARI_LAYER_MAX       10
+
+/* Per-layer accumulators, indexed by AKARI_LAYER_*. wall_ns is the summed
+ * EXCLUSIVE (self) duration attributed to the layer — a nested operation's time
+ * is charged to its own layer, not double-counted in the enclosing one. count is
+ * how many operations of that layer ran. Accumulated for every hooked call,
+ * whether or not a span is kept, and whether or not the request is sampled. */
+typedef struct {
+    uint64_t wall_ns[AKARI_LAYER_MAX];
+    uint32_t count[AKARI_LAYER_MAX];
+} profiler_layer_totals_t;
+
+/* One frame of the layer-attribution stack. Independent of the span stack so it
+ * works identically in sampled and non-sampled ("keep-frame") requests. start_ns
+ * is when the operation began; child_ns is the summed wall-time of nested layer
+ * operations, subtracted at pop to yield exclusive self-time. */
+typedef struct {
+    uint8_t  layer;
+    uint64_t start_ns;
+    uint64_t child_ns;
+} profiler_layer_frame_t;
+
+#define PROFILER_LAYER_STACK_MAX 256
+
+/* Stable lowercase layer names for export keys (index by AKARI_LAYER_*). */
+extern const char *const profiler_layer_names[AKARI_LAYER_MAX];
+
 /* OTel span kinds */
 #define SPAN_KIND_INTERNAL  1
 #define SPAN_KIND_SERVER    2
@@ -326,6 +372,22 @@ typedef struct profiler_state_s {
     int stack_overflow_count;           /* pushes dropped when stack was full */
 
     int active;
+
+    /* Head sampling decision, made once in profiler_rinit. When sampled, the
+     * request collects full child spans. When NOT sampled ("keep-frame"), child
+     * spans are neither created nor kept — only the root span and the per-layer
+     * summary are exported, so overhead is near zero but aggregate metrics
+     * (throughput, latency, layer breakdown) still flow. */
+    int sampled;
+
+    /* Per-layer wall-time + call-count summary, exported on every request. */
+    profiler_layer_totals_t layers;
+
+    /* Layer-attribution stack (independent of the span stack). */
+    profiler_layer_frame_t layer_stack[PROFILER_LAYER_STACK_MAX];
+    size_t layer_stack_depth;
+    int layer_stack_overflow;   /* pushes dropped when the layer stack was full */
+
     uint32_t max_depth;
     uint64_t min_duration_ns;   /* spans shorter than this are dropped post-execution */
     uint64_t rng_state;
@@ -367,7 +429,7 @@ void profiler_mshutdown(void);
 /* Free the calling thread's profiler state; call from PHP_GSHUTDOWN so every
  * thread's state is reclaimed under ZTS, not just the main thread at MSHUTDOWN. */
 void profiler_free_state(void);
-void profiler_rinit(uint32_t max_depth, double min_duration_ms);
+void profiler_rinit(uint32_t max_depth, double min_duration_ms, double sample_rate);
 void profiler_rshutdown(void);
 
 void profiler_set_flush_callback(profiler_flush_fn fn, void *user_data);
@@ -376,6 +438,9 @@ profiler_state_t *profiler_get_state(void);
 
 /* Helpers for export */
 void profiler_generate_hex_id(profiler_state_t *state, char *buf, size_t len);
+/* Raw 64-bit draw from the per-request xorshift PRNG (used by ID generation and
+ * the sampler). Advances rng_state; seeds it lazily on first use. */
+uint64_t profiler_random_u64(profiler_state_t *state);
 void profiler_resolve_pdo_classes(void);
 const profiler_frame_t *profiler_get_frame(profiler_state_t *state, uint32_t frame_index);
 int profiler_current_span_index(profiler_state_t *state, uint32_t *span_index);

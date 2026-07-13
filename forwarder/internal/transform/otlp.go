@@ -102,6 +102,15 @@ type Span struct {
 
 	// Root span: full CLI command line (process.command_line)
 	ProcessCommandLine string `msgpack:"pc,omitempty"`
+
+	// Root span: head-sampling decision (1 = full child-span tree collected,
+	// 0 = "keep-frame" — only root + layer summary).
+	Sampled uint8 `msgpack:"sd,omitempty"`
+
+	// Root span: per-layer time breakdown. Keyed by layer name (app, db, cache,
+	// http, template, messaging, search, compile, gc, io); each value is
+	// [duration_ns, call_count]. Present on every request, sampled or not.
+	Layers map[string][]uint64 `msgpack:"ly,omitempty"`
 }
 
 // OTLP JSON structures (minimal, matching ExportTraceServiceRequest)
@@ -164,8 +173,9 @@ type otlpKeyValue struct {
 }
 
 type otlpAnyValue struct {
-	StringValue *string `json:"stringValue,omitempty"`
-	IntValue    *string `json:"intValue,omitempty"`
+	StringValue *string  `json:"stringValue,omitempty"`
+	IntValue    *string  `json:"intValue,omitempty"`
+	DoubleValue *float64 `json:"doubleValue,omitempty"`
 }
 
 // OTLP logs JSON structures (ExportLogsServiceRequest subset).
@@ -242,6 +252,17 @@ func intVal(v uint64) otlpAnyValue {
 func intValI(v int) otlpAnyValue {
 	s := fmt.Sprintf("%d", v)
 	return otlpAnyValue{IntValue: &s}
+}
+
+func doubleVal(v float64) otlpAnyValue {
+	return otlpAnyValue{DoubleValue: &v}
+}
+
+// layerOrder is the stable emission order for per-layer attributes, matching
+// the AKARI_LAYER_* order in the extension's profiler.h.
+var layerOrder = []string{
+	"app", "db", "cache", "http", "template",
+	"messaging", "search", "compile", "gc", "io",
 }
 
 var (
@@ -475,6 +496,28 @@ func Transform(data []byte) (Result, error) {
 				attrs = append(attrs, otlpKeyValue{Key: "php.memory.peak_usage_bytes", Value: intVal(s.PeakMemBytes)})
 			}
 			attrs = append(attrs, otlpKeyValue{Key: "php.display_errors", Value: intVal(uint64(s.DisplayErrors))})
+
+			// Head-sampling decision.
+			attrs = append(attrs, otlpKeyValue{Key: "akari.sampled", Value: intVal(uint64(s.Sampled))})
+
+			// Per-layer time breakdown: akari.layer.<name>.duration_ms and
+			// akari.layer.<name>.count. Emitted in a stable layer order so the
+			// attribute list is deterministic regardless of map iteration.
+			for _, name := range layerOrder {
+				v, ok := s.Layers[name]
+				if !ok || len(v) < 2 {
+					continue
+				}
+				durationNs, count := v[0], v[1]
+				attrs = append(attrs, otlpKeyValue{
+					Key:   "akari.layer." + name + ".duration_ms",
+					Value: doubleVal(float64(durationNs) / 1e6),
+				})
+				attrs = append(attrs, otlpKeyValue{
+					Key:   "akari.layer." + name + ".count",
+					Value: intVal(count),
+				})
+			}
 		}
 
 		span.Attributes = attrs

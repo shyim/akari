@@ -23,7 +23,7 @@ static int hex_nibble(char c)
 /**
  * Parse W3C traceparent header: "00-{32hex}-{16hex}-{2hex}"
  * Returns 1 if valid, populates trace_id, parent_id and the sampled bit of
- * the trace-flags byte.
+ * the trace-flags byte (W3C §3.3.1: bit 0 = sampled).
  */
 static int parse_traceparent(const char *header, char *trace_id_out, char *parent_id_out,
                              int *sampled_out)
@@ -258,7 +258,9 @@ void init_root_span(profiler_state_t *state)
     if (traceparent && parse_traceparent(traceparent, state->trace_id, root->parent_span_id,
                                          &root->parent_sampled)) {
         root->has_parent = 1;
-        /* trace_id is now from the incoming traceparent */
+        /* trace_id is now from the incoming traceparent; parent_sampled records
+         * the upstream decision for the sampler (parent-based modes and the
+         * head-sampling keep-frame decision both honor it). */
     }
 
     /* Runtime environment annotations */

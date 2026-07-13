@@ -18,6 +18,8 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("akari.max_depth", "64", PHP_INI_SYSTEM, OnUpdateLong, max_depth, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.min_duration_ms", "0", PHP_INI_SYSTEM, OnUpdateReal, min_duration_ms, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.event_dispatch_min_duration_ms", "1", PHP_INI_SYSTEM, OnUpdateReal, event_dispatch_min_duration_ms, zend_akari_globals, akari_globals)
+    STD_PHP_INI_ENTRY("akari.sample_rate", "1.0", PHP_INI_SYSTEM, OnUpdateReal, sample_rate, zend_akari_globals, akari_globals)
+    STD_PHP_INI_ENTRY("akari.disable_at_memory_percentage", "0", PHP_INI_SYSTEM, OnUpdateReal, disable_at_memory_percentage, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.udp_host", "127.0.0.1", PHP_INI_SYSTEM, OnUpdateString, udp_host, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.udp_port", "4319", PHP_INI_SYSTEM, OnUpdateLong, udp_port, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_compile", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_compile, zend_akari_globals, akari_globals)
@@ -39,6 +41,8 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->max_depth = 64;
     akari_globals->min_duration_ms = 0;
     akari_globals->event_dispatch_min_duration_ms = 1;
+    akari_globals->sample_rate = 1.0;
+    akari_globals->disable_at_memory_percentage = 0;
     akari_globals->udp_host = NULL;
     akari_globals->udp_port = 4319;
     akari_globals->trace_compile = 0;
@@ -126,7 +130,8 @@ static void flush_callback(profiler_state_t *state, void *user_data)
 ZEND_FUNCTION(Akari_enable)
 {
     ZEND_PARSE_PARAMETERS_NONE();
-    profiler_rinit((uint32_t)AKARI_G(max_depth), AKARI_G(min_duration_ms));
+    profiler_rinit((uint32_t)AKARI_G(max_depth), AKARI_G(min_duration_ms),
+                   AKARI_G(sample_rate));
     profiler_set_flush_callback(flush_callback, NULL);
     profiler_set_flush_threshold((size_t)AKARI_G(flush_threshold));
 
@@ -696,13 +701,31 @@ PHP_MSHUTDOWN_FUNCTION(akari)
     return SUCCESS;
 }
 
+/* Memory kill-switch: true if peak usage already exceeds the configured
+ * percentage of memory_limit. When it does, the request is left un-profiled so
+ * the APM never pushes a memory-pressured request over the edge. Disabled
+ * (returns false) when the threshold is 0 or memory_limit is unlimited (-1). */
+static int akari_memory_over_limit(void)
+{
+    double pct = AKARI_G(disable_at_memory_percentage);
+    if (pct <= 0.0) return 0;
+
+    zend_long limit = PG(memory_limit);
+    if (limit <= 0) return 0;   /* unlimited or unset — nothing to protect */
+
+    size_t peak = zend_memory_peak_usage(1);
+    double used_pct = ((double)peak / (double)limit) * 100.0;
+    return used_pct >= pct;
+}
+
 PHP_RINIT_FUNCTION(akari)
 {
     /* Resolve PDO class entries once per request (safe time to call zend_lookup_class) */
     profiler_resolve_pdo_classes();
 
-    if (AKARI_G(enable)) {
-        profiler_rinit((uint32_t)AKARI_G(max_depth), AKARI_G(min_duration_ms));
+    if (AKARI_G(enable) && !akari_memory_over_limit()) {
+        profiler_rinit((uint32_t)AKARI_G(max_depth), AKARI_G(min_duration_ms),
+                       AKARI_G(sample_rate));
         profiler_set_flush_callback(flush_callback, NULL);
         profiler_set_flush_threshold((size_t)AKARI_G(flush_threshold));
 
@@ -793,8 +816,27 @@ PHP_MINFO_FUNCTION(akari)
     php_info_print_table_row(2, "Stack Trace Capture", "enabled");
     php_info_print_table_row(2, "SQL Normalization", "enabled");
     php_info_print_table_row(2, "W3C Trace Context", "enabled");
-    php_info_print_table_row(2, "Traces Sampler", akari_sampler_effective_name());
+    php_info_print_table_row(2, "Layer Summary", "enabled");
     php_info_print_table_row(2, "Userland API", "enabled");
+    php_info_print_table_end();
+
+    /* Sampling: the OTEL trace sampler (whether a request is traced at all) and
+     * the head sample rate (full child spans vs keep-frame layer summary). */
+    php_info_print_table_start();
+    php_info_print_table_header(2, "Sampling", "Value");
+    php_info_print_table_row(2, "Traces Sampler", akari_sampler_effective_name());
+    {
+        char rate_buf[32];
+        snprintf(rate_buf, sizeof(rate_buf), "%.4g", AKARI_G(sample_rate));
+        php_info_print_table_row(2, "Head Sample Rate", rate_buf);
+    }
+    if (AKARI_G(disable_at_memory_percentage) > 0) {
+        char mem_buf[32];
+        snprintf(mem_buf, sizeof(mem_buf), "%.4g%%", AKARI_G(disable_at_memory_percentage));
+        php_info_print_table_row(2, "Disable At Memory %", mem_buf);
+    } else {
+        php_info_print_table_row(2, "Disable At Memory %", "disabled");
+    }
     php_info_print_table_end();
 
     DISPLAY_INI_ENTRIES();

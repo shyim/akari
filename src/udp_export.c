@@ -166,11 +166,56 @@ static void write_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state, cons
     }
 }
 
+/* Number of layers (excluding APP) with non-zero time this request. APP is
+ * always emitted (as the derived remainder), so the layer map has at least 1
+ * entry whenever the root ran. */
+static uint32_t count_active_layers(profiler_state_t *state)
+{
+    uint32_t n = 0;
+    for (int i = 1; i < AKARI_LAYER_MAX; i++) {
+        if (state->layers.wall_ns[i] > 0 || state->layers.count[i] > 0) n++;
+    }
+    return n;
+}
+
+/* Emit the per-request layer breakdown as a map: layer-name → [duration_ns,
+ * count]. APP is derived as the root's wall-time minus all non-APP layer time
+ * (clamped ≥ 0) so app-vs-infrastructure reads directly. Exported on EVERY
+ * request, sampled or not — this is the always-on summary. */
+static void write_layer_summary_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
+{
+    profiler_root_span_t *root = &state->root;
+    uint32_t active = count_active_layers(state);
+
+    uint64_t non_app_ns = 0;
+    for (int i = 1; i < AKARI_LAYER_MAX; i++) non_app_ns += state->layers.wall_ns[i];
+
+    uint64_t root_ns = (root->end_time_ns > root->start_time_ns)
+                       ? (root->end_time_ns - root->start_time_ns) : 0;
+    uint64_t app_ns = (root_ns > non_app_ns) ? (root_ns - non_app_ns) : 0;
+
+    msgpack_write_map(buf, active + 1);   /* +1 for the always-present APP entry */
+
+    msgpack_write_key(buf, profiler_layer_names[AKARI_LAYER_APP]);
+    msgpack_write_array(buf, 2);
+    msgpack_write_uint64(buf, app_ns);
+    msgpack_write_uint32(buf, state->layers.count[AKARI_LAYER_APP]);
+
+    for (int i = 1; i < AKARI_LAYER_MAX; i++) {
+        if (state->layers.wall_ns[i] == 0 && state->layers.count[i] == 0) continue;
+        msgpack_write_key(buf, profiler_layer_names[i]);
+        msgpack_write_array(buf, 2);
+        msgpack_write_uint64(buf, state->layers.wall_ns[i]);
+        msgpack_write_uint32(buf, state->layers.count[i]);
+    }
+}
+
 static void write_root_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
 {
     profiler_root_span_t *root = &state->root;
 
-    uint32_t root_fields = 26;
+    /* Base 26 fields + sampled flag ("sd") + layer summary ("ly"). */
+    uint32_t root_fields = 26 + 2;
     if (root->http_route[0]) root_fields++;
     if (root->http_controller[0]) root_fields++;
     if (root->process_command_line[0]) root_fields++;
@@ -228,6 +273,13 @@ static void write_root_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
     msgpack_write_uint64(buf, (uint64_t)root->peak_memory_bytes);
     msgpack_write_key(buf, "de");
     msgpack_write_uint8(buf, (uint8_t)root->display_errors);
+    /* Sampling: whether this request collected the full child-span tree. A
+     * non-sampled request still carries the layer summary below. */
+    msgpack_write_key(buf, "sd");
+    msgpack_write_uint8(buf, (uint8_t)(state->sampled ? 1 : 0));
+    /* Per-layer time breakdown (always present). */
+    msgpack_write_key(buf, "ly");
+    write_layer_summary_msgpack(buf, state);
     if (root->http_route[0]) {
         msgpack_write_key(buf, "hr");
         msgpack_write_str(buf, root->http_route, strlen(root->http_route));

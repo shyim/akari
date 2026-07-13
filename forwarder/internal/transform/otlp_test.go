@@ -79,6 +79,71 @@ func TestBasicSpan(t *testing.T) {
 	}
 }
 
+// findAttr returns the value map for the named attribute across all spans, or nil.
+func findAttr(t *testing.T, tracesJSON []byte, key string) map[string]interface{} {
+	t.Helper()
+	var v map[string]interface{}
+	if err := json.Unmarshal(tracesJSON, &v); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	for _, rs := range v["resourceSpans"].([]interface{}) {
+		for _, ss := range rs.(map[string]interface{})["scopeSpans"].([]interface{}) {
+			for _, sp := range ss.(map[string]interface{})["spans"].([]interface{}) {
+				spm := sp.(map[string]interface{})
+				attrs, _ := spm["attributes"].([]interface{})
+				for _, a := range attrs {
+					am := a.(map[string]interface{})
+					if am["key"] == key {
+						return am["value"].(map[string]interface{})
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func TestLayerSummaryAndSampled(t *testing.T) {
+	root := Span{
+		SpanID:  makeSpanID(),
+		Name:    "GET /index",
+		Kind:    2,
+		StartNs: 1000,
+		EndNs:   2000,
+		Sampled: 1,
+		Layers: map[string][]uint64{
+			"app": {1_500_000, 0},  // 1.5 ms, count derived → 0
+			"db":  {500_000, 3},    // 0.5 ms across 3 queries
+		},
+	}
+	dg := makeDatagram("test-svc", makeTraceID(), root)
+	data, err := msgpack.Marshal(dg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Transform(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if v := findAttr(t, res.Traces, "akari.sampled"); v == nil || v["intValue"] != "1" {
+		t.Fatalf("akari.sampled: want intValue 1, got %v", v)
+	}
+	if v := findAttr(t, res.Traces, "akari.layer.db.duration_ms"); v == nil || v["doubleValue"].(float64) != 0.5 {
+		t.Fatalf("akari.layer.db.duration_ms: want 0.5, got %v", v)
+	}
+	if v := findAttr(t, res.Traces, "akari.layer.db.count"); v == nil || v["intValue"] != "3" {
+		t.Fatalf("akari.layer.db.count: want 3, got %v", v)
+	}
+	if v := findAttr(t, res.Traces, "akari.layer.app.duration_ms"); v == nil || v["doubleValue"].(float64) != 1.5 {
+		t.Fatalf("akari.layer.app.duration_ms: want 1.5, got %v", v)
+	}
+	// A layer not present in the map must not appear as an attribute.
+	if v := findAttr(t, res.Traces, "akari.layer.redis.duration_ms"); v != nil {
+		t.Fatalf("akari.layer.redis should be absent, got %v", v)
+	}
+}
+
 func TestExceptionEvent(t *testing.T) {
 	dg := makeDatagram("test-svc", makeTraceID(), Span{
 		SpanID:           makeSpanID(),

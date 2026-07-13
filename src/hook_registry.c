@@ -123,6 +123,7 @@ void hook_register_method_threshold_kind(hook_registry_t *reg,
 
     e->hook_type = hook_type;
     e->span_kind = span_kind;
+    e->layer = reg->default_layer;
     e->use_instanceof = use_instanceof;
     e->method_filter = NULL;
     e->threshold_kind = threshold_kind;
@@ -155,6 +156,7 @@ void hook_register_class_wildcard(hook_registry_t *reg,
 
     e->hook_type = hook_type;
     e->span_kind = span_kind;
+    e->layer = reg->default_layer;
     e->use_instanceof = use_instanceof;
     e->method_filter = filter;
     e->pre_hook = pre_hook;
@@ -184,6 +186,7 @@ void hook_register_function(hook_registry_t *reg,
 
     e->hook_type = hook_type;
     e->span_kind = span_kind;
+    e->layer = reg->default_layer;
     e->use_instanceof = 0;
     e->method_filter = NULL;
     e->pre_hook = pre_hook;
@@ -214,6 +217,7 @@ void hook_register_function_threshold(hook_registry_t *reg,
 
     e->hook_type = hook_type;
     e->span_kind = span_kind;
+    e->layer = reg->default_layer;
     e->use_instanceof = 0;
     e->method_filter = NULL;
     e->min_duration_ns = (uint64_t)(min_duration_ms * 1000000.0);
