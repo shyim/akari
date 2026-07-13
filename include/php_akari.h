@@ -37,6 +37,11 @@ ZEND_BEGIN_MODULE_GLOBALS(akari)
     zend_bool trace_gc;
     zend_bool trace_cli;
     zend_long flush_threshold;
+    /* Trace sampler (OTel OTEL_TRACES_SAMPLER semantics). Empty INI falls back
+     * to the OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG env vars, then to
+     * parentbased_always_on (the OTel SDK default). */
+    char *traces_sampler;
+    char *traces_sampler_arg;
     /* Per-request profiler state; NULL until profiler_init() for the request. */
     profiler_state_t *state;
     /* Per-request hook scratch state (per-thread under ZTS). These hold curl

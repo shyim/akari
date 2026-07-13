@@ -12,11 +12,21 @@ static int is_valid_hex(const char *s, size_t len)
     return 1;
 }
 
+static int hex_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 /**
  * Parse W3C traceparent header: "00-{32hex}-{16hex}-{2hex}"
- * Returns 1 if valid, populates trace_id and parent_id.
+ * Returns 1 if valid, populates trace_id, parent_id and the sampled bit of
+ * the trace-flags byte.
  */
-static int parse_traceparent(const char *header, char *trace_id_out, char *parent_id_out)
+static int parse_traceparent(const char *header, char *trace_id_out, char *parent_id_out,
+                             int *sampled_out)
 {
     if (!header || strlen(header) < 55) return 0;
 
@@ -28,9 +38,12 @@ static int parse_traceparent(const char *header, char *trace_id_out, char *paren
     /* parent_id: 16 chars */
     if (!is_valid_hex(header + 36, 16)) return 0;
     if (header[52] != '-') return 0;
+    /* trace-flags: 2 chars; bit 0 = sampled */
+    if (!is_valid_hex(header + 53, 2)) return 0;
 
     memcpy(trace_id_out, header + 3, 32);
     memcpy(parent_id_out, header + 36, 16);
+    *sampled_out = hex_nibble(header[54]) & 0x01;
     return 1;
 }
 
@@ -157,6 +170,16 @@ void init_root_span(profiler_state_t *state)
     root->is_cli = (strcmp(sapi_module.name, "cli") == 0);
 
     if (root->is_cli) {
+        /* CLI trace context comes from the TRACEPARENT environment variable
+         * (the W3C convention for process propagation). Parsed before the
+         * trace_cli gate so parent-based sampling and trace-id adoption work
+         * even when the auto CLI root span is disabled. */
+        const char *env_tp = getenv("TRACEPARENT");
+        if (env_tp && parse_traceparent(env_tp, state->trace_id, root->parent_span_id,
+                                        &root->parent_sampled)) {
+            root->has_parent = 1;
+        }
+
         /* Without auto CLI tracing, leave the root inactive: individual
          * instrumented calls still emit spans, but there is no entry span
          * unless userland calls markAsWebTransaction(). */
@@ -232,7 +255,8 @@ void init_root_span(profiler_state_t *state)
 
     /* Try to read traceparent header */
     const char *traceparent = sapi_getenv("HTTP_TRACEPARENT", 16);
-    if (traceparent && parse_traceparent(traceparent, state->trace_id, root->parent_span_id)) {
+    if (traceparent && parse_traceparent(traceparent, state->trace_id, root->parent_span_id,
+                                         &root->parent_sampled)) {
         root->has_parent = 1;
         /* trace_id is now from the incoming traceparent */
     }
@@ -346,4 +370,108 @@ void finalize_root_span(profiler_state_t *state)
     }
 
     root->active = 0;
+}
+
+/* ── Trace sampling (OTEL_TRACES_SAMPLER semantics) ── */
+
+typedef enum {
+    AKARI_SAMPLER_ALWAYS_ON = 0,
+    AKARI_SAMPLER_ALWAYS_OFF,
+    AKARI_SAMPLER_TRACEIDRATIO,
+    AKARI_SAMPLER_PARENTBASED_ALWAYS_ON,
+    AKARI_SAMPLER_PARENTBASED_ALWAYS_OFF,
+    AKARI_SAMPLER_PARENTBASED_TRACEIDRATIO,
+} akari_sampler_mode_t;
+
+static const char *sampler_mode_names[] = {
+    "always_on",
+    "always_off",
+    "traceidratio",
+    "parentbased_always_on",
+    "parentbased_always_off",
+    "parentbased_traceidratio",
+};
+
+/* Resolve the sampler: akari.traces_sampler INI when set, else the
+ * OTEL_TRACES_SAMPLER env var, else parentbased_always_on (the OTel SDK
+ * default: follow the parent's sampled flag, trace root requests). An
+ * unrecognized name warns and falls back to that same default. */
+static akari_sampler_mode_t resolve_sampler(double *ratio_out)
+{
+    const char *name = AKARI_G(traces_sampler);
+    if (!name || !name[0]) {
+        name = getenv("OTEL_TRACES_SAMPLER");
+    }
+
+    const char *arg = AKARI_G(traces_sampler_arg);
+    if (!arg || !arg[0]) {
+        arg = getenv("OTEL_TRACES_SAMPLER_ARG");
+    }
+    /* Ratio argument for the traceidratio samplers; OTel default is 1.0. */
+    double ratio = 1.0;
+    if (arg && arg[0]) {
+        ratio = strtod(arg, NULL);
+        if (ratio < 0.0) ratio = 0.0;
+        if (ratio > 1.0) ratio = 1.0;
+    }
+    *ratio_out = ratio;
+
+    if (!name || !name[0]) {
+        return AKARI_SAMPLER_PARENTBASED_ALWAYS_ON;
+    }
+    for (size_t i = 0; i < sizeof(sampler_mode_names) / sizeof(sampler_mode_names[0]); i++) {
+        if (strcmp(name, sampler_mode_names[i]) == 0) {
+            return (akari_sampler_mode_t)i;
+        }
+    }
+    php_error_docref(NULL, E_WARNING,
+                     "unsupported traces sampler \"%s\", falling back to parentbased_always_on", name);
+    return AKARI_SAMPLER_PARENTBASED_ALWAYS_ON;
+}
+
+const char *akari_sampler_effective_name(void)
+{
+    double ratio;
+    return sampler_mode_names[resolve_sampler(&ratio)];
+}
+
+/* Consistent probability decision from the trace id: compare its lowest
+ * 56 bits (the portion W3C Trace Context designates as random) against
+ * ratio * 2^56. Services sharing a trace id reach the same verdict. */
+static int trace_id_ratio_sampled(const char *trace_id, double ratio)
+{
+    if (ratio >= 1.0) return 1;
+    if (ratio <= 0.0) return 0;
+
+    uint64_t value = 0;
+    for (int i = 18; i < 32; i++) {
+        value = (value << 4) | (uint64_t)hex_nibble(trace_id[i]);
+    }
+    uint64_t threshold = (uint64_t)(ratio * (double)(1ULL << 56));
+    return value < threshold;
+}
+
+int akari_sampling_decide(profiler_state_t *state)
+{
+    double ratio;
+    akari_sampler_mode_t mode = resolve_sampler(&ratio);
+    int has_parent = state->root.has_parent;
+    int parent_sampled = state->root.parent_sampled;
+
+    switch (mode) {
+        case AKARI_SAMPLER_ALWAYS_ON:
+            return 1;
+        case AKARI_SAMPLER_ALWAYS_OFF:
+            return 0;
+        case AKARI_SAMPLER_TRACEIDRATIO:
+            return trace_id_ratio_sampled(state->trace_id, ratio);
+        case AKARI_SAMPLER_PARENTBASED_ALWAYS_ON:
+            return has_parent ? parent_sampled : 1;
+        case AKARI_SAMPLER_PARENTBASED_ALWAYS_OFF:
+            return has_parent ? parent_sampled : 0;
+        case AKARI_SAMPLER_PARENTBASED_TRACEIDRATIO:
+            return has_parent ? parent_sampled
+                              : trace_id_ratio_sampled(state->trace_id, ratio);
+    }
+    return 1;
 }

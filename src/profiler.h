@@ -205,6 +205,7 @@ typedef struct {
     char span_id[16];
     char parent_span_id[16];   /* from traceparent header */
     int has_parent;            /* traceparent was present */
+    int parent_sampled;        /* sampled bit of the traceparent trace-flags */
     uint64_t start_time_ns;
     uint64_t end_time_ns;
 

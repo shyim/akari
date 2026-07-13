@@ -146,6 +146,16 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms)
     /* Initialize root HTTP span (may override trace_id from traceparent) */
     init_root_span(g_state);
 
+    /* Sampling decision: evaluated once per request, after the root span has
+     * parsed the incoming trace context (traceparent header / TRACEPARENT env).
+     * An unsampled request leaves the profiler inactive — the observer installs
+     * no handlers and nothing is buffered or exported. */
+    if (!akari_sampling_decide(g_state)) {
+        g_state->root.active = 0;
+        g_state->active = 0;
+        return;
+    }
+
     /* Initialize curl header tracking for trace propagation */
     curl_propagation_rinit();
 

@@ -194,6 +194,8 @@ Functions that can introduce latency are traced with configurable thresholds:
 | `akari.trace_gc` | `0` | Profile GC collect cycles time |
 | `akari.trace_cli` | `1` | Auto-create a root span for CLI runs, named after the command (e.g. `php console asset:install`, using the script basename). The full command line (PHP executable + arguments) is recorded as the `process.command_line` attribute. Disable to skip the entry span unless `markAsWebTransaction()` is called |
 | `akari.flush_threshold` | `4096` | Completed spans buffered before a mid-request flush |
+| `akari.traces_sampler` | _(empty)_ | Trace sampler with standard `OTEL_TRACES_SAMPLER` values (`always_on`, `always_off`, `traceidratio`, `parentbased_always_on`, `parentbased_always_off`, `parentbased_traceidratio`). When unset, falls back to the `OTEL_TRACES_SAMPLER` env var, then to `parentbased_always_on`. Parent context comes from the `traceparent` header (web) or the `TRACEPARENT` env var (CLI); unsampled requests are dropped before any instrumentation runs |
+| `akari.traces_sampler_arg` | _(empty)_ | Ratio for the `traceidratio` samplers (`0.0`–`1.0`). When unset, falls back to `OTEL_TRACES_SAMPLER_ARG`, then to `1.0` |
 
 Akari only creates spans for the function calls covered by its built-in
 instrumentation hooks (databases, HTTP clients, caches, messaging, frameworks)
