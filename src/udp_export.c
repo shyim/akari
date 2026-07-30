@@ -48,6 +48,39 @@ void udp_export_shutdown(void)
 
 /* ── Span serialization ── */
 
+static uint32_t count_custom_tags(profiler_state_t *state, uint32_t target)
+{
+    uint32_t count = 0;
+    for (int i = 0; i < state->tag_count; i++) {
+        if (state->tag_span_indices[i] == target &&
+            strchr(state->tags[i], '=') != NULL) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static void write_custom_tags_msgpack(msgpack_buf_t *buf, profiler_state_t *state,
+                                      uint32_t target)
+{
+    uint32_t count = count_custom_tags(state, target);
+    msgpack_write_array(buf, count);
+    for (int i = 0; i < state->tag_count; i++) {
+        if (state->tag_span_indices[i] != target) continue;
+
+        const char *separator = strchr(state->tags[i], '=');
+        if (!separator) continue;
+        size_t key_len = (size_t)(separator - state->tags[i]);
+        const char *value = separator + 1;
+
+        msgpack_write_map(buf, 2);
+        msgpack_write_key(buf, "k");
+        msgpack_write_str(buf, state->tags[i], key_len);
+        msgpack_write_key(buf, "v");
+        msgpack_write_str(buf, value, strlen(value));
+    }
+}
+
 static void write_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state, const profiler_span_t *span, size_t span_idx)
 {
     const profiler_frame_t *frame = profiler_get_frame(state, span->frame_index);
@@ -63,6 +96,8 @@ static void write_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state, cons
     if (msg) field_count += 3 + (msg->has_link ? 2 : 0);
     if (tpl) field_count += 3; /* tg (engine), tn (name), tb (block name) */
     if (exc) field_count += 3; /* et (exception type), em (exception message), ev (event timestamp) */
+    uint32_t custom_tag_count = count_custom_tags(state, (uint32_t)span_idx);
+    if (custom_tag_count > 0) field_count++;
     msgpack_write_map(buf, field_count);
 
     msgpack_write_key(buf, "s");
@@ -164,6 +199,11 @@ static void write_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state, cons
         msgpack_write_key(buf, "ev");
         msgpack_write_uint64(buf, exc->timestamp_ns);
     }
+
+    if (custom_tag_count > 0) {
+        msgpack_write_key(buf, "ct");
+        write_custom_tags_msgpack(buf, state, (uint32_t)span_idx);
+    }
 }
 
 /* Number of layers (excluding APP) with non-zero time this request. APP is
@@ -219,6 +259,8 @@ static void write_root_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
     if (root->http_route[0]) root_fields++;
     if (root->http_controller[0]) root_fields++;
     if (root->process_command_line[0]) root_fields++;
+    uint32_t custom_tag_count = count_custom_tags(state, PROFILER_TAG_ROOT);
+    if (custom_tag_count > 0) root_fields++;
     msgpack_write_map(buf, root_fields);
     msgpack_write_key(buf, "s");
     msgpack_write_bin(buf, root->span_id, 16);
@@ -291,6 +333,10 @@ static void write_root_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
     if (root->process_command_line[0]) {
         msgpack_write_key(buf, "pc");
         msgpack_write_str(buf, root->process_command_line, strlen(root->process_command_line));
+    }
+    if (custom_tag_count > 0) {
+        msgpack_write_key(buf, "ct");
+        write_custom_tags_msgpack(buf, state, PROFILER_TAG_ROOT);
     }
 }
 

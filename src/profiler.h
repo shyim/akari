@@ -16,6 +16,9 @@
 #define PROFILER_FLUSH_THRESHOLD  4096
 #define PROFILER_EVENT_DISPATCH_STACK_MAX 64
 #define PROFILER_EVENT_NAME_MAX 256
+#define PROFILER_MAX_TAGS 16
+#define PROFILER_TAG_MAX 128
+#define PROFILER_TAG_ROOT UINT32_MAX
 
 /* ── Layers ──
  *
@@ -399,7 +402,10 @@ typedef struct profiler_state_s {
     void *flush_user_data;
 
     /* Userland API: custom tags */
-    char tags[16][128];
+    char tags[PROFILER_MAX_TAGS][PROFILER_TAG_MAX];
+    /* Span index receiving each tag, or PROFILER_TAG_ROOT for trace-level
+     * custom variables and tags added without an active child span. */
+    uint32_t tag_span_indices[PROFILER_MAX_TAGS];
     int tag_count;
 
     /* Userland API: custom transaction name override */

@@ -80,6 +80,27 @@ static void jb_json_escaped(json_buf_t *jb, const char *s, size_t len)
     }
 }
 
+static void write_custom_tags_json(json_buf_t *jb, profiler_state_t *state,
+                                   uint32_t target, int *attribute_count)
+{
+    for (int i = 0; i < state->tag_count; i++) {
+        if (state->tag_span_indices[i] != target) continue;
+
+        const char *separator = strchr(state->tags[i], '=');
+        if (!separator) continue;
+        const char *value = separator + 1;
+
+        if (*attribute_count > 0) jb_char(jb, ',');
+        jb_str(jb, "{\"key\":\"");
+        jb_json_escaped(jb, state->tags[i],
+                        (size_t)(separator - state->tags[i]));
+        jb_str(jb, "\",\"value\":{\"stringValue\":\"");
+        jb_json_escaped(jb, value, strlen(value));
+        jb_str(jb, "\"}}");
+        (*attribute_count)++;
+    }
+}
+
 /* ── Span JSON ── */
 
 static void write_span_json(json_buf_t *jb, profiler_state_t *state, const profiler_span_t *span)
@@ -259,6 +280,8 @@ static void write_span_json(json_buf_t *jb, profiler_state_t *state, const profi
         }
     }
 
+    write_custom_tags_json(jb, state, span_idx, &attr_count);
+
     jb_str(jb, "]");
 
     /* Span links (for consumer spans linked to producer traces) */
@@ -421,6 +444,8 @@ static void write_root_span_json(json_buf_t *jb, profiler_state_t *state)
         jb_uint64(jb, root->display_errors);
         jb_str(jb, "\"}}"); n++;
     }
+
+    write_custom_tags_json(jb, state, PROFILER_TAG_ROOT, &n);
 
     jb_str(jb, "],\"status\":{\"code\":");
     jb_uint64(jb, root->status_code);
