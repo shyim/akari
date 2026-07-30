@@ -150,6 +150,11 @@ static size_t create_span_entry(profiler_state_t *state, zend_execute_data *exec
     } else if (state->root.active || state->root.end_time_ns > 0) {
         memcpy(span->parent_span_id, state->root.span_id, 16);
         span->has_parent = 1;
+    } else if (state->root.has_parent) {
+        /* With trace_cli=0 there is no local root span, but instrumented calls
+         * must still attach directly to the propagated upstream parent. */
+        memcpy(span->parent_span_id, state->root.parent_span_id, 16);
+        span->has_parent = 1;
     } else {
         memset(span->parent_span_id, '0', 16);
         span->has_parent = 0;
