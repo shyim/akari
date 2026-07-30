@@ -15,7 +15,8 @@
 /* ── Helper: record OCI attribute ── */
 
 static void record_oci_attr(profiler_state_t *state, uint32_t span_index,
-                              const char *statement, size_t stmt_len)
+                              const char *statement, size_t stmt_len,
+                              int normalize_statement)
 {
     if (state->db_attr_count >= state->db_attr_capacity) {
         size_t new_cap = state->db_attr_capacity ? state->db_attr_capacity * 2 : PROFILER_INITIAL_DB_ATTRS;
@@ -30,10 +31,15 @@ static void record_oci_attr(profiler_state_t *state, uint32_t span_index,
     attr->span_index = span_index;
     snprintf(attr->db_system, DB_SYSTEM_MAX, "oracle");
     if (statement && stmt_len > 0) {
-        if (stmt_len >= DB_STATEMENT_MAX) stmt_len = DB_STATEMENT_MAX - 1;
-        memcpy(attr->db_statement, statement, stmt_len);
-        attr->db_statement[stmt_len] = '\0';
-        attr->db_statement_len = stmt_len;
+        if (normalize_statement) {
+            profiler_sql_normalize(statement, stmt_len,
+                attr->db_statement, sizeof(attr->db_statement),
+                &attr->db_statement_len);
+        } else {
+            profiler_sql_truncate(statement, stmt_len,
+                attr->db_statement, sizeof(attr->db_statement),
+                &attr->db_statement_len);
+        }
     }
     state->db_attr_count++;
 }
@@ -54,7 +60,7 @@ static void *oci_parse_pre(profiler_state_t *state, zend_execute_data *execute_d
             stmt_len = Z_STRLEN_P(sql_arg);
         }
     }
-    record_oci_attr(state, span_index, stmt, stmt_len);
+    record_oci_attr(state, span_index, stmt, stmt_len, 1);
     return NULL;
 }
 
@@ -63,7 +69,7 @@ static void *oci_execute_pre(profiler_state_t *state, zend_execute_data *execute
 {
     (void)span;
     (void)execute_data;
-    record_oci_attr(state, span_index, NULL, 0);
+    record_oci_attr(state, span_index, NULL, 0, 0);
     return NULL;
 }
 
@@ -79,7 +85,7 @@ static void *oci_connect_pre(profiler_state_t *state, zend_execute_data *execute
             snprintf(db_name, DB_NAME_MAX, "%s", Z_STRVAL_P(conn_arg));
         }
     }
-    record_oci_attr(state, span_index, db_name, strlen(db_name));
+    record_oci_attr(state, span_index, db_name, strlen(db_name), 0);
     return NULL;
 }
 
@@ -88,7 +94,7 @@ static void *oci_tx_pre(profiler_state_t *state, zend_execute_data *execute_data
 {
     (void)span;
     (void)execute_data;
-    record_oci_attr(state, span_index, NULL, 0);
+    record_oci_attr(state, span_index, NULL, 0, 0);
     return NULL;
 }
 

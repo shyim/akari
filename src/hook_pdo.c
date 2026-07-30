@@ -53,11 +53,10 @@ static void record_pdo_attrs_internal(profiler_state_t *state, zend_execute_data
         if (num_args >= 1) {
             zval *query_arg = ZEND_CALL_ARG(execute_data, 1);
             if (query_arg && Z_TYPE_P(query_arg) == IS_STRING) {
-                size_t copy_len = Z_STRLEN_P(query_arg);
-                if (copy_len >= DB_STATEMENT_MAX) copy_len = DB_STATEMENT_MAX - 1;
-                memcpy(attr->db_statement, Z_STRVAL_P(query_arg), copy_len);
-                attr->db_statement[copy_len] = '\0';
-                attr->db_statement_len = copy_len;
+                profiler_sql_normalize(
+                    Z_STRVAL_P(query_arg), Z_STRLEN_P(query_arg),
+                    attr->db_statement, sizeof(attr->db_statement),
+                    &attr->db_statement_len);
             }
         }
     }
@@ -75,11 +74,10 @@ static void record_pdo_attrs_internal(profiler_state_t *state, zend_execute_data
             dbh = stmt->dbh;
             /* For prepared statements, get query from stmt->query_string */
             if (attr->db_statement_len == 0 && stmt->query_string) {
-                size_t copy_len = ZSTR_LEN(stmt->query_string);
-                if (copy_len >= DB_STATEMENT_MAX) copy_len = DB_STATEMENT_MAX - 1;
-                memcpy(attr->db_statement, ZSTR_VAL(stmt->query_string), copy_len);
-                attr->db_statement[copy_len] = '\0';
-                attr->db_statement_len = copy_len;
+                profiler_sql_normalize(
+                    ZSTR_VAL(stmt->query_string), ZSTR_LEN(stmt->query_string),
+                    attr->db_statement, sizeof(attr->db_statement),
+                    &attr->db_statement_len);
             }
         }
     }

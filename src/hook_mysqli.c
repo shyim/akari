@@ -50,11 +50,10 @@ static void record_mysqli_attr(profiler_state_t *state, zend_execute_data *execu
         if ((uint32_t)sql_arg_pos <= num_args) {
             zval *sql_arg = ZEND_CALL_ARG(execute_data, sql_arg_pos);
             if (sql_arg && Z_TYPE_P(sql_arg) == IS_STRING) {
-                size_t copy_len = Z_STRLEN_P(sql_arg);
-                if (copy_len >= DB_STATEMENT_MAX) copy_len = DB_STATEMENT_MAX - 1;
-                memcpy(attr->db_statement, Z_STRVAL_P(sql_arg), copy_len);
-                attr->db_statement[copy_len] = '\0';
-                attr->db_statement_len = copy_len;
+                profiler_sql_normalize(
+                    Z_STRVAL_P(sql_arg), Z_STRLEN_P(sql_arg),
+                    attr->db_statement, sizeof(attr->db_statement),
+                    &attr->db_statement_len);
             }
         }
     }

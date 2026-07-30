@@ -29,58 +29,76 @@ void profiler_sql_normalize(const char *sql, size_t sql_len,
     if (sql_len >= out_size) sql_len = out_size - 1;
 
     size_t w = 0;
-    int in_string = 0;   /* inside '...' */
-    int in_dquote = 0;   /* inside "..." */
     int in_space = 0;
-    char prev = '\0';
 
     for (size_t i = 0; i < sql_len && w < out_size - 1; i++) {
         char c = sql[i];
 
-        /* Handle string literals */
-        if (c == '\'' && !in_dquote) {
-            if (!in_string) {
-                in_string = 1;
-                out[w++] = '?';
-                continue;
-            } else if (i + 1 < sql_len && sql[i + 1] == '\'') {
-                /* Escaped quote: skip it */
-                i++;
-                continue;
-            } else {
-                in_string = 0;
-                continue;
-            }
-        }
+        /* Replace quoted literals with one placeholder. SQL doubled quotes and
+         * backslash escapes are consumed without exposing their contents. */
+        if (c == '\'' || c == '"') {
+            char quote = c;
+            out[w++] = '?';
+            in_space = 0;
 
-        if (c == '"' && !in_string) {
-            if (!in_dquote) {
-                in_dquote = 1;
-                out[w++] = '?';
-                continue;
-            } else {
-                in_dquote = 0;
-                continue;
+            for (i++; i < sql_len; i++) {
+                if (sql[i] == '\\' && i + 1 < sql_len) {
+                    i++;
+                    continue;
+                }
+                if (sql[i] != quote) continue;
+                if (i + 1 < sql_len && sql[i + 1] == quote) {
+                    i++;
+                    continue;
+                }
+                break;
             }
-        }
-
-        /* Skip content inside strings */
-        if (in_string || in_dquote) {
             continue;
         }
 
-        /* Replace numeric literals (standalone numbers after =/< />/etc) */
-        if ((c >= '0' && c <= '9') && (prev == '=' || prev == '<' || prev == '>'
-            || prev == ' ' || prev == ',' || prev == '(')) {
-            /* Check if followed by more digits or whitespace/punctuation */
+        /* Replace standalone integer, decimal, hexadecimal, and exponent
+         * literals. Digits embedded in identifiers remain unchanged. */
+        int starts_number = (c >= '0' && c <= '9') &&
+            (i == 0 ||
+             !((sql[i - 1] >= 'a' && sql[i - 1] <= 'z') ||
+               (sql[i - 1] >= 'A' && sql[i - 1] <= 'Z') ||
+               (sql[i - 1] >= '0' && sql[i - 1] <= '9') ||
+               sql[i - 1] == '_' || sql[i - 1] == '$'));
+        if (starts_number) {
             size_t j = i + 1;
-            while (j < sql_len && sql[j] >= '0' && sql[j] <= '9') j++;
-            if (j < sql_len && (sql[j] == ' ' || sql[j] == ',' || sql[j] == ')'
-                || sql[j] == ';' || sql[j] == '\n')) {
-                if (w > 0 && out[w - 1] != ' ') out[w++] = ' ';
+            if (c == '0' && j < sql_len &&
+                (sql[j] == 'x' || sql[j] == 'X')) {
+                j++;
+                while (j < sql_len &&
+                       ((sql[j] >= '0' && sql[j] <= '9') ||
+                        (sql[j] >= 'a' && sql[j] <= 'f') ||
+                        (sql[j] >= 'A' && sql[j] <= 'F'))) {
+                    j++;
+                }
+            } else {
+                while (j < sql_len && sql[j] >= '0' && sql[j] <= '9') j++;
+                if (j < sql_len && sql[j] == '.') {
+                    j++;
+                    while (j < sql_len && sql[j] >= '0' && sql[j] <= '9') j++;
+                }
+                if (j < sql_len && (sql[j] == 'e' || sql[j] == 'E')) {
+                    size_t exponent = j++;
+                    if (j < sql_len && (sql[j] == '+' || sql[j] == '-')) j++;
+                    size_t exponent_digits = j;
+                    while (j < sql_len && sql[j] >= '0' && sql[j] <= '9') j++;
+                    if (j == exponent_digits) j = exponent;
+                }
+            }
+
+            int ends_number = j == sql_len ||
+                !((sql[j] >= 'a' && sql[j] <= 'z') ||
+                  (sql[j] >= 'A' && sql[j] <= 'Z') ||
+                  (sql[j] >= '0' && sql[j] <= '9') ||
+                  sql[j] == '_' || sql[j] == '$');
+            if (ends_number) {
                 out[w++] = '?';
-                i = j; /* skip the number */
-                prev = '?';
+                i = j - 1;
+                in_space = 0;
                 continue;
             }
         }
@@ -91,13 +109,11 @@ void profiler_sql_normalize(const char *sql, size_t sql_len,
                 out[w++] = ' ';
                 in_space = 1;
             }
-            prev = c;
             continue;
         }
 
         in_space = 0;
         out[w++] = c;
-        prev = c;
     }
 
     /* Trim trailing space */

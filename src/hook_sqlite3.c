@@ -78,10 +78,9 @@ static profiler_db_attr_t *sqlite3_alloc_attr(profiler_state_t *state, uint32_t 
 
 static void sqlite3_set_statement(profiler_db_attr_t *attr, const char *sql, size_t len)
 {
-    if (len >= DB_STATEMENT_MAX) len = DB_STATEMENT_MAX - 1;
-    memcpy(attr->db_statement, sql, len);
-    attr->db_statement[len] = '\0';
-    attr->db_statement_len = len;
+    profiler_sql_normalize(sql, len,
+        attr->db_statement, sizeof(attr->db_statement),
+        &attr->db_statement_len);
 }
 
 /* ── Callbacks ── */

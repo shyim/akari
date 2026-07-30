@@ -36,4 +36,4 @@ foreach ($spans as $span) {
 found: yes
 kind: CLIENT
 db.system: mysql
-db.statement: SELECT 1
+db.statement: SELECT ?

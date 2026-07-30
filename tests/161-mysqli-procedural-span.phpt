@@ -34,4 +34,4 @@ foreach ($spans as $span) {
 --EXPECT--
 found: yes
 db.system: mysql
-db.statement: SELECT 42
+db.statement: SELECT ?

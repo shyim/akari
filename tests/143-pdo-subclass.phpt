@@ -34,5 +34,5 @@ echo "found: " . ($found ? 'yes' : 'no') . "\n";
 ?>
 --EXPECT--
 db.system: sqlite
-db.statement: SELECT 1
+db.statement: SELECT ?
 found: yes
