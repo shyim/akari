@@ -2,12 +2,20 @@
 
 /* ── Root span + traceparent ── */
 
-static int is_valid_hex(const char *s, size_t len)
+static int is_valid_lower_hex(const char *s, size_t len)
 {
     for (size_t i = 0; i < len; i++) {
         char c = s[i];
-        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
             return 0;
+    }
+    return 1;
+}
+
+static int is_all_zero(const char *s, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        if (s[i] != '0') return 0;
     }
     return 1;
 }
@@ -28,18 +36,18 @@ static int hex_nibble(char c)
 static int parse_traceparent(const char *header, char *trace_id_out, char *parent_id_out,
                              int *sampled_out)
 {
-    if (!header || strlen(header) < 55) return 0;
+    if (!header || strlen(header) != 55) return 0;
 
-    /* version: 2 chars */
-    if (header[2] != '-') return 0;
+    /* Version 00 has a fixed 55-byte shape and no extension fields. */
+    if (header[0] != '0' || header[1] != '0' || header[2] != '-') return 0;
     /* trace_id: 32 chars */
-    if (!is_valid_hex(header + 3, 32)) return 0;
+    if (!is_valid_lower_hex(header + 3, 32) || is_all_zero(header + 3, 32)) return 0;
     if (header[35] != '-') return 0;
     /* parent_id: 16 chars */
-    if (!is_valid_hex(header + 36, 16)) return 0;
+    if (!is_valid_lower_hex(header + 36, 16) || is_all_zero(header + 36, 16)) return 0;
     if (header[52] != '-') return 0;
     /* trace-flags: 2 chars; bit 0 = sampled */
-    if (!is_valid_hex(header + 53, 2)) return 0;
+    if (!is_valid_lower_hex(header + 53, 2)) return 0;
 
     memcpy(trace_id_out, header + 3, 32);
     memcpy(parent_id_out, header + 36, 16);

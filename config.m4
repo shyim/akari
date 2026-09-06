@@ -11,9 +11,11 @@ PHP_ARG_ENABLE([akari-debug],
   [no], [no])
 
 if test "$PHP_AKARI" != "no"; then
-  AC_CHECK_HEADERS([curl/curl.h], [], [
-    AC_MSG_ERROR([curl headers not found. Install libcurl-dev or curl-devel.])
+  PKG_CHECK_MODULES([LIBCURL], [libcurl], [], [
+    AC_MSG_ERROR([libcurl not found. Install libcurl-dev or curl-devel.])
   ])
+  PHP_EVAL_INCLINE([$LIBCURL_CFLAGS])
+  PHP_EVAL_LIBLINE([$LIBCURL_LIBS], [AKARI_SHARED_LIBADD])
 
   AC_DEFINE(HAVE_AKARI, 1, [Whether you have akari])
 
