@@ -446,13 +446,17 @@ ZEND_FUNCTION(Akari_createSpan)
     span->name_override[name_len] = '\0';
     span->name_override_len = name_len;
 
-    /* Parent is the current real span, or root span for web requests. */
+    /* Parent is the current real span, the local root, or an upstream parent
+     * when CLI root tracing is disabled. */
     uint32_t parent_span_idx;
     if (profiler_current_span_index(state, &parent_span_idx)) {
         memcpy(span->parent_span_id, state->spans[parent_span_idx].span_id, 16);
         span->has_parent = 1;
-    } else if (state->root.active) {
+    } else if (state->root.active || state->root.end_time_ns > 0) {
         memcpy(span->parent_span_id, state->root.span_id, 16);
+        span->has_parent = 1;
+    } else if (state->root.has_parent) {
+        memcpy(span->parent_span_id, state->root.parent_span_id, 16);
         span->has_parent = 1;
     }
 
