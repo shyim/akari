@@ -181,18 +181,7 @@ static uint64_t effective_min_duration_ns(const hook_entry_t *hook)
 
 static void undo_span(profiler_state_t *state, size_t span_idx)
 {
-    if (span_idx == state->span_count - 1) {
-        state->span_count--;
-        /* Remove stale attribute/event records so the next span
-         * that reuses this index does not inherit them. */
-        uint32_t idx = (uint32_t)span_idx;
-        profiler_remove_db_attrs(state, idx);
-        profiler_remove_http_attrs(state, idx);
-        profiler_remove_msg_attrs(state, idx);
-        profiler_remove_template_attrs(state, idx);
-        profiler_remove_exception_events(state, idx);
-        profiler_remove_span_tags(state, idx);
-    }
+    profiler_drop_span(state, span_idx);
 }
 
 /* ── observer_init: called for every function call to decide if we observe it ── */

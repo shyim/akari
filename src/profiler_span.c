@@ -521,7 +521,8 @@ static int remap_span_index(uint32_t old_index, const size_t *remap,
     return 1;
 }
 
-void profiler_compact_exported_spans(profiler_state_t *state)
+static void compact_spans(profiler_state_t *state, size_t drop_index,
+                          int compact_exported)
 {
     if (!state || state->span_count == 0) return;
 
@@ -531,7 +532,9 @@ void profiler_compact_exported_spans(profiler_state_t *state)
 
     size_t new_count = 0;
     for (size_t i = 0; i < old_count; i++) {
-        if (state->spans[i].exported && state->spans[i].end_time_ns > 0) {
+        if (i == drop_index ||
+            (compact_exported &&
+             state->spans[i].exported && state->spans[i].end_time_ns > 0)) {
             remap[i] = SIZE_MAX;
             continue;
         }
@@ -657,6 +660,48 @@ void profiler_compact_exported_spans(profiler_state_t *state)
 
     state->span_count = new_count;
     free(remap);
+}
+
+void profiler_drop_span(profiler_state_t *state, size_t span_index)
+{
+    if (!state || span_index >= state->span_count) return;
+
+    profiler_span_t dropped = state->spans[span_index];
+
+    /* A duration threshold may reject a parent only after its nested calls have
+     * completed. Preserve those calls by parenting direct children to the
+     * rejected span's parent before compacting the span array. */
+    for (size_t i = 0; i < state->span_count; i++) {
+        if (i == span_index) continue;
+
+        profiler_span_t *span = &state->spans[i];
+        if (span->has_parent &&
+            memcmp(span->parent_span_id, dropped.span_id, sizeof(dropped.span_id)) == 0) {
+            if (dropped.has_parent) {
+                memcpy(span->parent_span_id, dropped.parent_span_id,
+                       sizeof(span->parent_span_id));
+                span->has_parent = 1;
+            } else {
+                memset(span->parent_span_id, '0', sizeof(span->parent_span_id));
+                span->has_parent = 0;
+            }
+        }
+
+        /* stacktrace.depth represents the observed call depth. All spans whose
+         * lifetime is contained by the rejected span lose one visible level. */
+        if (span->depth > dropped.depth &&
+            span->start_time_ns >= dropped.start_time_ns &&
+            (dropped.end_time_ns == 0 || span->start_time_ns <= dropped.end_time_ns)) {
+            span->depth--;
+        }
+    }
+
+    compact_spans(state, span_index, 0);
+}
+
+void profiler_compact_exported_spans(profiler_state_t *state)
+{
+    compact_spans(state, SIZE_MAX, 1);
 }
 
 /* ── Span capacity management ── */

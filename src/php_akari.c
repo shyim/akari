@@ -814,7 +814,13 @@ PHP_RSHUTDOWN_FUNCTION(akari)
      * introspection for the remainder of the request. Clear them at the real
      * request boundary so a worker cannot leak them into its next request. */
     profiler_state_t *tag_state = profiler_get_state();
-    if (tag_state) tag_state->tag_count = 0;
+    if (tag_state) {
+        tag_state->tag_count = 0;
+        memset(tag_state->tags, 0, sizeof(tag_state->tags));
+        for (int i = 0; i < PROFILER_MAX_TAGS; i++) {
+            tag_state->tag_span_indices[i] = PROFILER_TAG_ROOT;
+        }
+    }
     return SUCCESS;
 }
 

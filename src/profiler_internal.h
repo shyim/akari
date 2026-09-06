@@ -65,6 +65,7 @@ uint32_t find_or_add_frame(profiler_state_t *state,
 int ensure_span_capacity(profiler_state_t *state);
 void maybe_flush(profiler_state_t *state);
 void maybe_flush_logs(profiler_state_t *state);
+void profiler_drop_span(profiler_state_t *state, size_t span_index);
 void profiler_compact_exported_spans(profiler_state_t *state);
 void profiler_compact_exported_logs(profiler_state_t *state);
 
