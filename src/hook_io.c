@@ -107,69 +107,137 @@ static void *sleep_pre(profiler_state_t *state, zend_execute_data *execute_data,
     return NULL;
 }
 
-/* ── file_get_contents hook (only HTTP URLs) ── */
+/* ── Scheme-aware stream hooks ── */
 
-static void *file_get_contents_pre(profiler_state_t *state, zend_execute_data *execute_data,
-                                    profiler_span_t *span, uint32_t span_index)
+static void *fs_path_pre(profiler_state_t *state, zend_execute_data *execute_data,
+                         profiler_span_t *span, uint32_t span_index);
+
+static int is_http_url(const char *path, size_t path_len)
 {
-    (void)span;
+    return (path_len >= 7 && strncasecmp(path, "http://", 7) == 0)
+        || (path_len >= 8 && strncasecmp(path, "https://", 8) == 0);
+}
+
+static void record_http_stream_attr(profiler_state_t *state, uint32_t span_index,
+                                    const char *url, size_t url_len, const char *method)
+{
+    if (state->http_attr_count >= state->http_attr_capacity) {
+        size_t new_cap = state->http_attr_capacity ? state->http_attr_capacity * 2 : 16;
+        profiler_http_attr_t *new_attrs = realloc(state->http_attrs,
+                                                   new_cap * sizeof(profiler_http_attr_t));
+        if (!new_attrs) return;
+        state->http_attrs = new_attrs;
+        state->http_attr_capacity = new_cap;
+    }
+
+    profiler_http_attr_t *attr = &state->http_attrs[state->http_attr_count];
+    memset(attr, 0, sizeof(profiler_http_attr_t));
+    attr->span_index = span_index;
+    snprintf(attr->method, sizeof(attr->method), "%s", method);
+
+    if (url_len >= PROFILER_HTTP_URL_MAX) url_len = PROFILER_HTTP_URL_MAX - 1;
+    memcpy(attr->url, url, url_len);
+    attr->url[url_len] = '\0';
+    attr->url_len = url_len;
+
+    /* Extract host and optional port from the URL authority. */
+    const char *authority = url + (strncasecmp(url, "https://", 8) == 0 ? 8 : 7);
+    const char *authority_end = authority;
+    while (*authority_end && *authority_end != '/' && *authority_end != '?'
+            && *authority_end != '#') {
+        authority_end++;
+    }
+
+    const char *port_sep = NULL;
+    const char *host_end = authority_end;
+    if (authority < authority_end && *authority == '[') {
+        const char *bracket = memchr(authority, ']', (size_t)(authority_end - authority));
+        if (bracket) {
+            host_end = bracket + 1;
+            if (host_end < authority_end && *host_end == ':') port_sep = host_end;
+        }
+    } else {
+        port_sep = memchr(authority, ':', (size_t)(authority_end - authority));
+        if (port_sep) host_end = port_sep;
+    }
+
+    size_t host_len = (size_t)(host_end - authority);
+    if (host_len >= sizeof(attr->server_address)) host_len = sizeof(attr->server_address) - 1;
+    if (host_len > 0) {
+        memcpy(attr->server_address, authority, host_len);
+        attr->server_address[host_len] = '\0';
+    }
+    if (port_sep && port_sep + 1 < authority_end) {
+        attr->server_port = (uint16_t)atoi(port_sep + 1);
+    }
+
+    state->http_attr_count++;
+}
+
+static void mark_http_stream(profiler_state_t *state, profiler_span_t *span,
+                             uint32_t span_index, const char *url, size_t url_len,
+                             const char *method)
+{
+    record_http_stream_attr(state, span_index, url, url_len, method);
+    span->kind = SPAN_KIND_CLIENT;
+
+    /* These hooks are registered by the mixed I/O module, so correct the
+     * current operation's layer when its path resolves to HTTP. */
+    if (state->layer_stack_overflow == 0 && state->layer_stack_depth > 0) {
+        state->layer_stack[state->layer_stack_depth - 1].layer = AKARI_LAYER_HTTP;
+    }
+}
+
+static zval *stream_path_arg(zend_execute_data *execute_data)
+{
     uint32_t num_args = ZEND_CALL_NUM_ARGS(execute_data);
     if (num_args >= 1) {
-        zval *url_arg = ZEND_CALL_ARG(execute_data, 1);
-        if (url_arg && Z_TYPE_P(url_arg) == IS_STRING) {
-            const char *url = Z_STRVAL_P(url_arg);
-            /* Only instrument HTTP URLs */
-            if (strncasecmp(url, "http://", 7) == 0 || strncasecmp(url, "https://", 8) == 0) {
-                /* Record as HTTP client span */
-                if (state->http_attr_count >= state->http_attr_capacity) {
-                    size_t new_cap = state->http_attr_capacity ? state->http_attr_capacity * 2 : 16;
-                    profiler_http_attr_t *new_attrs = realloc(state->http_attrs,
-                                                               new_cap * sizeof(profiler_http_attr_t));
-                    if (!new_attrs) return NULL;
-                    state->http_attrs = new_attrs;
-                    state->http_attr_capacity = new_cap;
-                }
-
-                profiler_http_attr_t *attr = &state->http_attrs[state->http_attr_count];
-                memset(attr, 0, sizeof(profiler_http_attr_t));
-                attr->span_index = span_index;
-                strcpy(attr->method, "GET");
-
-                size_t url_len = Z_STRLEN_P(url_arg);
-                if (url_len >= PROFILER_HTTP_URL_MAX) url_len = PROFILER_HTTP_URL_MAX - 1;
-                memcpy(attr->url, url, url_len);
-                attr->url[url_len] = '\0';
-                attr->url_len = url_len;
-
-                /* Parse server address from URL */
-                const char *p = url;
-                if (strncmp(p, "http://", 7) == 0) p += 7;
-                else if (strncmp(p, "https://", 8) == 0) p += 8;
-                const char *slash = strchr(p, '/');
-                const char *colon = strchr(p, ':');
-                if (colon && (!slash || colon < slash)) {
-                    size_t hlen = (size_t)(colon - p);
-                    if (hlen < sizeof(attr->server_address)) {
-                        memcpy(attr->server_address, p, hlen);
-                        attr->server_address[hlen] = '\0';
-                    }
-                    attr->server_port = (uint16_t)atoi(colon + 1);
-                } else if (slash) {
-                    size_t hlen = (size_t)(slash - p);
-                    if (hlen < sizeof(attr->server_address)) {
-                        memcpy(attr->server_address, p, hlen);
-                        attr->server_address[hlen] = '\0';
-                    }
-                }
-
-                span->kind = SPAN_KIND_CLIENT;
-                state->http_attr_count++;
-                return NULL;
-            }
-        }
+        zval *path_arg = ZEND_CALL_ARG(execute_data, 1);
+        if (path_arg && Z_TYPE_P(path_arg) == IS_STRING) return path_arg;
     }
-    /* Non-HTTP file_get_contents: skip (return special marker to suppress span) */
+    return NULL;
+}
+
+static void *file_get_contents_pre(profiler_state_t *state, zend_execute_data *execute_data,
+                                   profiler_span_t *span, uint32_t span_index)
+{
+    zval *path_arg = stream_path_arg(execute_data);
+    if (path_arg && is_http_url(Z_STRVAL_P(path_arg), Z_STRLEN_P(path_arg))) {
+        mark_http_stream(state, span, span_index, Z_STRVAL_P(path_arg),
+                         Z_STRLEN_P(path_arg), "GET");
+        return NULL;
+    }
+
+    /* Local file_get_contents calls are intentionally omitted entirely. */
     return HOOK_PRE_SKIP_SPAN;
+}
+
+static void *fopen_pre(profiler_state_t *state, zend_execute_data *execute_data,
+                       profiler_span_t *span, uint32_t span_index)
+{
+    zval *path_arg = stream_path_arg(execute_data);
+    if (path_arg && is_http_url(Z_STRVAL_P(path_arg), Z_STRLEN_P(path_arg))) {
+        mark_http_stream(state, span, span_index, Z_STRVAL_P(path_arg),
+                         Z_STRLEN_P(path_arg), "GET");
+        return NULL;
+    }
+
+    span->min_duration_ns = 1000000; /* Keep local filesystem calls only above 1ms. */
+    return fs_path_pre(state, execute_data, span, span_index);
+}
+
+static void *file_put_contents_pre(profiler_state_t *state, zend_execute_data *execute_data,
+                                   profiler_span_t *span, uint32_t span_index)
+{
+    zval *path_arg = stream_path_arg(execute_data);
+    if (path_arg && is_http_url(Z_STRVAL_P(path_arg), Z_STRLEN_P(path_arg))) {
+        mark_http_stream(state, span, span_index, Z_STRVAL_P(path_arg),
+                         Z_STRLEN_P(path_arg), "PUT");
+        return NULL;
+    }
+
+    span->min_duration_ns = 1000000; /* Keep local filesystem calls only above 1ms. */
+    return fs_path_pre(state, execute_data, span, span_index);
 }
 
 /* ── Mail hook ── */
@@ -386,12 +454,14 @@ void hook_io_register(hook_registry_t *reg)
     hook_register_function(reg, "time_nanosleep",
         HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, sleep_pre, NULL);
 
-    /* file_get_contents — HTTP URLs always traced, local files skipped.
-     * The pre-hook checks the URL scheme and only records HTTP attributes
-     * for http:// and https:// URLs. For local files, it returns a marker
-     * that causes the span to be dropped via min_duration post-check. */
+    /* Stream functions share scheme-aware hooks so the first registration owns
+     * both HTTP client semantics and local-filesystem filtering. */
     hook_register_function(reg, "file_get_contents",
         HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, file_get_contents_pre, NULL);
+    hook_register_function(reg, "fopen",
+        HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, fopen_pre, NULL);
+    hook_register_function(reg, "file_put_contents",
+        HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, file_put_contents_pre, NULL);
 
     /* Mail */
     hook_register_function(reg, "mail",
@@ -420,8 +490,6 @@ void hook_io_register(hook_registry_t *reg)
         HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, popen_pre, NULL);
 
     /* Filesystem ops — 1ms threshold to only trace slow I/O */
-    hook_register_function_threshold(reg, "fopen",
-        HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, 1.0, fs_path_pre, NULL);
     hook_register_function_threshold(reg, "fread",
         HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, 1.0, fs_path_pre, NULL);
     hook_register_function_threshold(reg, "fwrite",
@@ -476,9 +544,6 @@ void hook_io_register(hook_registry_t *reg)
         HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, 1.0, fs_path_pre, NULL);
     hook_register_function_threshold(reg, "tmpfile",
         HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, 1.0, fs_path_pre, NULL);
-    hook_register_function_threshold(reg, "file_put_contents",
-        HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, 1.0, fs_path_pre, NULL);
-
     /* Password hashing — always traced (intentionally slow) */
     hook_register_function(reg, "password_hash",
         HOOK_TYPE_INTERNAL, SPAN_KIND_INTERNAL, password_pre, NULL);
