@@ -783,20 +783,20 @@ PHP_RINIT_FUNCTION(akari)
 
 PHP_RSHUTDOWN_FUNCTION(akari)
 {
-    if (AKARI_G(enable)) {
-        profiler_state_t *state = profiler_get_state();
-        /* If user called Akari\disable(), state is already inactive.
-         * Root was already finalized and exported — don't duplicate. */
-        if (state && state->active) {
-            /* Phase 1: Finalize root span (sets end_time_ns, HTTP status, peak memory).
-             * Must happen BEFORE export so the root span is included in the trace. */
-            profiler_rshutdown_finalize();
-            /* Phase 2: Export all spans + root while attribute arrays still exist */
-            export_spans(state);
-            state->span_count = 0;
-            /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
-            profiler_rshutdown();
-        }
+    profiler_state_t *state = profiler_get_state();
+    /* Profiling may have been started manually with Akari\enable() while the
+     * INI directive remains disabled. Finalize any active request state rather
+     * than using the directive as a proxy for the runtime state. If user called
+     * Akari\disable(), state is already inactive and export is not duplicated. */
+    if (state && state->active) {
+        /* Phase 1: Finalize root span (sets end_time_ns, HTTP status, peak memory).
+         * Must happen BEFORE export so the root span is included in the trace. */
+        profiler_rshutdown_finalize();
+        /* Phase 2: Export all spans + root while attribute arrays still exist */
+        export_spans(state);
+        state->span_count = 0;
+        /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
+        profiler_rshutdown();
     }
     /* Free curl restored-header slists now that the request's CurlHandle
      * objects have been destroyed. Deferred to here (not profiler_rshutdown)
