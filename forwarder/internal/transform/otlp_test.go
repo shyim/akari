@@ -144,6 +144,36 @@ func TestLayerSummaryAndSampled(t *testing.T) {
 	}
 }
 
+func TestCustomTags(t *testing.T) {
+	root := Span{
+		SpanID:  makeSpanID(),
+		Name:    "GET /checkout",
+		Kind:    2,
+		StartNs: 1000,
+		EndNs:   2000,
+		CustomTags: []LogAttr{
+			{Key: "customer.id", Value: "42"},
+			{Key: "custom.tenant", Value: "acme"},
+		},
+	}
+	dg := makeDatagram("test-svc", makeTraceID(), root)
+	data, err := msgpack.Marshal(dg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Transform(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if v := findAttr(t, res.Traces, "customer.id"); v == nil || v["stringValue"] != "42" {
+		t.Fatalf("customer.id: want stringValue 42, got %v", v)
+	}
+	if v := findAttr(t, res.Traces, "custom.tenant"); v == nil || v["stringValue"] != "acme" {
+		t.Fatalf("custom.tenant: want stringValue acme, got %v", v)
+	}
+}
+
 func TestExceptionEvent(t *testing.T) {
 	dg := makeDatagram("test-svc", makeTraceID(), Span{
 		SpanID:           makeSpanID(),

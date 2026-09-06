@@ -400,6 +400,23 @@ void profiler_remove_exception_events(profiler_state_t *state, uint32_t span_ind
     }
 }
 
+void profiler_remove_span_tags(profiler_state_t *state, uint32_t span_index)
+{
+    if (!state) return;
+    for (int i = 0; i < state->tag_count; i++) {
+        if (state->tag_span_indices[i] != span_index) continue;
+        if (i + 1 < state->tag_count) {
+            memmove(&state->tags[i], &state->tags[i + 1],
+                    (size_t)(state->tag_count - i - 1) * sizeof(state->tags[0]));
+            memmove(&state->tag_span_indices[i], &state->tag_span_indices[i + 1],
+                    (size_t)(state->tag_count - i - 1) *
+                    sizeof(state->tag_span_indices[0]));
+        }
+        state->tag_count--;
+        i--;
+    }
+}
+
 /* Promote a single pending event to an escaped (uncaught) error: mark its
  * span and the root span ERROR, then clear the pending flag so it exports. */
 static void promote_escaped_event(profiler_state_t *state, profiler_exception_event_t *ev)
@@ -616,6 +633,30 @@ static void compact_spans(profiler_state_t *state, size_t drop_index,
         }
     }
     state->exception_event_count = write_idx;
+
+    int tag_count = 0;
+    for (int i = 0; i < state->tag_count; i++) {
+        uint32_t target = state->tag_span_indices[i];
+        if (target == PROFILER_TAG_ROOT) {
+            if (tag_count != i) {
+                memcpy(state->tags[tag_count], state->tags[i],
+                       sizeof(state->tags[tag_count]));
+            }
+            state->tag_span_indices[tag_count++] = PROFILER_TAG_ROOT;
+            continue;
+        }
+
+        uint32_t new_index;
+        if (remap_span_index(target, remap, old_count, &new_index)) {
+            if (tag_count != i) {
+                memcpy(state->tags[tag_count], state->tags[i],
+                       sizeof(state->tags[tag_count]));
+            }
+            state->tag_span_indices[tag_count] = new_index;
+            tag_count++;
+        }
+    }
+    state->tag_count = tag_count;
 
     state->span_count = new_count;
     free(remap);

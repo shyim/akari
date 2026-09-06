@@ -170,6 +170,7 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms, double sample_ra
     g_state->stack_overflow_count = 0;
     g_state->event_dispatch_depth = 0;
     g_state->service_name_override[0] = '\0';
+    g_state->tag_count = 0;
     memset(&g_state->layers, 0, sizeof(g_state->layers));
     g_state->layer_stack_depth = 0;
     g_state->layer_stack_overflow = 0;
@@ -275,7 +276,6 @@ void profiler_rshutdown(void)
     hook_attribute_cache_free(g_state);
 
     /* Reset userland API state */
-    g_state->tag_count = 0;
     g_state->manual_span_count = 0;
     g_state->has_custom_transaction = 0;
     g_state->service_name_override[0] = '\0';

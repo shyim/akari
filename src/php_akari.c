@@ -182,7 +182,9 @@ ZEND_FUNCTION(Akari_getSpansJson)
 {
     ZEND_PARSE_PARAMETERS_NONE();
     profiler_state_t *state = profiler_get_state();
-    if (!state || state->span_count == 0) {
+    int has_finalized_root = state && !state->root.active &&
+        state->root.end_time_ns > 0;
+    if (!state || (state->span_count == 0 && !has_finalized_root)) {
         RETURN_FALSE;
     }
     const char *service_name = get_service_name(state);
@@ -275,6 +277,60 @@ ZEND_FUNCTION(Akari_setServiceName)
 
 /* ── Userland API: addTag ── */
 
+static uint32_t current_tag_target(profiler_state_t *state)
+{
+    uint32_t span_index;
+    if (profiler_current_span_index(state, &span_index)) {
+        return span_index;
+    }
+
+    /* createSpan() opens a manual span until request shutdown but does not add
+     * it to the observer call stack. Treat the most recently opened manual span
+     * as active so the documented createSpan() + addTag() flow works. */
+    if (state->manual_span_count > 0) {
+        int manual_index = state->manual_spans[state->manual_span_count - 1];
+        if (manual_index >= 0 && (size_t)manual_index < state->span_count) {
+            return (uint32_t)manual_index;
+        }
+    }
+
+    return PROFILER_TAG_ROOT;
+}
+
+static void store_tag(profiler_state_t *state, const char *prefix,
+                      zend_string *key, zend_string *value, uint32_t target)
+{
+    if (!state) return;
+
+    char buf[PROFILER_TAG_MAX];
+    int n = snprintf(buf, sizeof(buf), "%s%.*s=%.*s",
+        prefix,
+        (int)ZSTR_LEN(key), ZSTR_VAL(key),
+        (int)ZSTR_LEN(value), ZSTR_VAL(value));
+    size_t tag_len = profiler_clamp_snprintf_len(n, sizeof(buf));
+    const char *separator = memchr(buf, '=', tag_len);
+    if (!separator) return;
+    size_t stored_key_len = (size_t)(separator - buf);
+
+    /* Replace an existing key and move it to the current target span. */
+    for (int i = 0; i < state->tag_count; i++) {
+        const char *existing_separator = strchr(state->tags[i], '=');
+        if (!existing_separator) continue;
+        size_t existing_key_len = (size_t)(existing_separator - state->tags[i]);
+        if (existing_key_len == stored_key_len &&
+            memcmp(state->tags[i], buf, stored_key_len) == 0) {
+            memcpy(state->tags[i], buf, tag_len + 1);
+            state->tag_span_indices[i] = target;
+            return;
+        }
+    }
+
+    if (state->tag_count >= PROFILER_MAX_TAGS) return;
+    memcpy(state->tags[state->tag_count], buf, tag_len + 1);
+    state->tag_span_indices[state->tag_count] = target;
+    state->tag_count++;
+}
+
 ZEND_FUNCTION(Akari_addTag)
 {
     zend_string *key, *value;
@@ -284,21 +340,8 @@ ZEND_FUNCTION(Akari_addTag)
     ZEND_PARSE_PARAMETERS_END();
 
     profiler_state_t *state = profiler_get_state();
-    if (state && state->tag_count < 16) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "%.*s=%.*s",
-            (int)ZSTR_LEN(key), ZSTR_VAL(key),
-            (int)ZSTR_LEN(value), ZSTR_VAL(value));
-        /* Check for duplicates */
-        for (int i = 0; i < state->tag_count; i++) {
-            if (strncmp(state->tags[i], buf, ZSTR_LEN(key) + 1) == 0) {
-                /* Replace existing tag */
-                snprintf(state->tags[i], sizeof(state->tags[i]), "%s", buf);
-                return;
-            }
-        }
-        snprintf(state->tags[state->tag_count], sizeof(state->tags[state->tag_count]), "%s", buf);
-        state->tag_count++;
+    if (state) {
+        store_tag(state, "", key, value, current_tag_target(state));
     }
 }
 
@@ -332,11 +375,14 @@ ZEND_FUNCTION(Akari_removeTag)
     if (state) {
         size_t key_len = ZSTR_LEN(key);
         for (int i = 0; i < state->tag_count; i++) {
-            if (strncmp(state->tags[i], ZSTR_VAL(key), key_len) == 0
-                && state->tags[i][key_len] == '=') {
+            const char *separator = strchr(state->tags[i], '=');
+            if (separator &&
+                (size_t)(separator - state->tags[i]) == key_len &&
+                memcmp(state->tags[i], ZSTR_VAL(key), key_len) == 0) {
                 /* Shift remaining tags down */
                 for (int j = i; j < state->tag_count - 1; j++) {
                     memcpy(state->tags[j], state->tags[j + 1], sizeof(state->tags[j]));
+                    state->tag_span_indices[j] = state->tag_span_indices[j + 1];
                 }
                 state->tag_count--;
                 break;
@@ -355,16 +401,9 @@ ZEND_FUNCTION(Akari_setCustomVariable)
         Z_PARAM_STR(value)
     ZEND_PARSE_PARAMETERS_END();
 
-    /* Custom variables are stored as tags with a prefix */
+    /* Custom variables are stored as root-span tags with a prefix. */
     profiler_state_t *state = profiler_get_state();
-    if (state && state->tag_count < 16) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "custom.%.*s=%.*s",
-            (int)ZSTR_LEN(key), ZSTR_VAL(key),
-            (int)ZSTR_LEN(value), ZSTR_VAL(value));
-        snprintf(state->tags[state->tag_count], sizeof(state->tags[state->tag_count]), "%s", buf);
-        state->tag_count++;
-    }
+    store_tag(state, "custom.", key, value, PROFILER_TAG_ROOT);
 }
 
 /* ── Userland API: createSpan ──
@@ -407,13 +446,17 @@ ZEND_FUNCTION(Akari_createSpan)
     span->name_override[name_len] = '\0';
     span->name_override_len = name_len;
 
-    /* Parent is the current real span, or root span for web requests. */
+    /* Parent is the current real span, the local root, or an upstream parent
+     * when CLI root tracing is disabled. */
     uint32_t parent_span_idx;
     if (profiler_current_span_index(state, &parent_span_idx)) {
         memcpy(span->parent_span_id, state->spans[parent_span_idx].span_id, 16);
         span->has_parent = 1;
-    } else if (state->root.active) {
+    } else if (state->root.active || state->root.end_time_ns > 0) {
         memcpy(span->parent_span_id, state->root.span_id, 16);
+        span->has_parent = 1;
+    } else if (state->root.has_parent) {
+        memcpy(span->parent_span_id, state->root.parent_span_id, 16);
         span->has_parent = 1;
     }
 
@@ -744,20 +787,20 @@ PHP_RINIT_FUNCTION(akari)
 
 PHP_RSHUTDOWN_FUNCTION(akari)
 {
-    if (AKARI_G(enable)) {
-        profiler_state_t *state = profiler_get_state();
-        /* If user called Akari\disable(), state is already inactive.
-         * Root was already finalized and exported — don't duplicate. */
-        if (state && state->active) {
-            /* Phase 1: Finalize root span (sets end_time_ns, HTTP status, peak memory).
-             * Must happen BEFORE export so the root span is included in the trace. */
-            profiler_rshutdown_finalize();
-            /* Phase 2: Export all spans + root while attribute arrays still exist */
-            export_spans(state);
-            state->span_count = 0;
-            /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
-            profiler_rshutdown();
-        }
+    profiler_state_t *state = profiler_get_state();
+    /* Profiling may have been started manually with Akari\enable() while the
+     * INI directive remains disabled. Finalize any active request state rather
+     * than using the directive as a proxy for the runtime state. If user called
+     * Akari\disable(), state is already inactive and export is not duplicated. */
+    if (state && state->active) {
+        /* Phase 1: Finalize root span (sets end_time_ns, HTTP status, peak memory).
+         * Must happen BEFORE export so the root span is included in the trace. */
+        profiler_rshutdown_finalize();
+        /* Phase 2: Export all spans + root while attribute arrays still exist */
+        export_spans(state);
+        state->span_count = 0;
+        /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
+        profiler_rshutdown();
     }
     /* Free curl restored-header slists now that the request's CurlHandle
      * objects have been destroyed. Deferred to here (not profiler_rshutdown)
@@ -767,6 +810,11 @@ PHP_RSHUTDOWN_FUNCTION(akari)
     /* Always clear pending service name to prevent leaking across requests
      * (e.g. in PHP-FPM workers where setServiceName() was called without enable()). */
     AKARI_G(pending_service_name)[0] = '\0';
+    /* Explicit Akari\disable() keeps fixed-size tags available to debug
+     * introspection for the remainder of the request. Clear them at the real
+     * request boundary so a worker cannot leak them into its next request. */
+    profiler_state_t *tag_state = profiler_get_state();
+    if (tag_state) tag_state->tag_count = 0;
     return SUCCESS;
 }
 
