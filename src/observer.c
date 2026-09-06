@@ -186,6 +186,7 @@ static void undo_span(profiler_state_t *state, size_t span_idx)
         profiler_remove_msg_attrs(state, idx);
         profiler_remove_template_attrs(state, idx);
         profiler_remove_exception_events(state, idx);
+        profiler_remove_span_tags(state, idx);
     }
 }
 

@@ -86,6 +86,9 @@ type Span struct {
 	ExceptionMessage string `msgpack:"em,omitempty"`
 	ExceptionTimeNs  uint64 `msgpack:"ev,omitempty"`
 
+	// Userland tags/custom variables attached by the PHP API.
+	CustomTags []LogAttr `msgpack:"ct,omitempty"`
+
 	// Root span: PHP runtime environment
 	PhpVersion    string `msgpack:"pv,omitempty"`
 	PhpSapi       string `msgpack:"ps,omitempty"`
@@ -440,6 +443,13 @@ func Transform(data []byte) (Result, error) {
 				TimeUnixNs: fmt.Sprintf("%d", s.ExceptionTimeNs),
 				Attributes: eventAttrs,
 			}}
+		}
+
+		for _, tag := range s.CustomTags {
+			if tag.Key == "" {
+				continue
+			}
+			attrs = append(attrs, otlpKeyValue{Key: tag.Key, Value: strVal(tag.Value)})
 		}
 
 		// Root-span attributes (HTTP for SERVER roots, command line for CLI roots,

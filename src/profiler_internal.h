@@ -75,6 +75,7 @@ void profiler_remove_http_attrs(profiler_state_t *state, uint32_t span_index);
 void profiler_remove_msg_attrs(profiler_state_t *state, uint32_t span_index);
 void profiler_remove_template_attrs(profiler_state_t *state, uint32_t span_index);
 void profiler_remove_exception_events(profiler_state_t *state, uint32_t span_index);
+void profiler_remove_span_tags(profiler_state_t *state, uint32_t span_index);
 
 /* ── Caught-exception detection (defined in profiler_span.c) ──
  * Engine-hook exception events start "pending". An exception's fate is only
