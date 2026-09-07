@@ -91,6 +91,7 @@ void profiler_minit(void)
 void profiler_free_state(void)
 {
     if (g_state) {
+        observer_contexts_free(g_state);
         hook_attribute_cache_free(g_state);
         free(g_state->frames);
         free(g_state->spans);
@@ -154,6 +155,7 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms, double sample_ra
     }
 
     /* Reset for new request */
+    observer_contexts_reset(g_state);
     g_state->frame_count = 0;
     g_state->span_count = 0;
     g_state->db_attr_count = 0;
@@ -166,14 +168,9 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms, double sample_ra
     g_state->log_overflow_warned = 0;
     g_state->root_exception_escaped = 0;
     g_state->root_exception_message[0] = '\0';
-    g_state->stack_depth = 0;
-    g_state->stack_overflow_count = 0;
-    g_state->event_dispatch_depth = 0;
     g_state->service_name_override[0] = '\0';
     g_state->tag_count = 0;
     memset(&g_state->layers, 0, sizeof(g_state->layers));
-    g_state->layer_stack_depth = 0;
-    g_state->layer_stack_overflow = 0;
     g_state->max_depth = (max_depth > PROFILER_MAX_STACK) ? PROFILER_MAX_STACK
                        : (max_depth < 1) ? 1 : (uint32_t)max_depth;
     /* Clamp min_duration: 0 to 10 seconds */
@@ -200,7 +197,7 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms, double sample_ra
     /* Trace sampling (OTEL_TRACES_SAMPLER): evaluated once per request, after
      * the root span has parsed the incoming trace context (traceparent header /
      * TRACEPARENT env). An unsampled request leaves the profiler inactive — the
-     * observer installs no handlers and nothing is buffered or exported. */
+     * observer skips collection and nothing is buffered or exported. */
     if (!akari_sampling_decide(g_state)) {
         g_state->root.active = 0;
         g_state->active = 0;
@@ -274,6 +271,7 @@ void profiler_rshutdown(void)
 
     /* Free #[Akari\Span] attribute lookup cache */
     hook_attribute_cache_free(g_state);
+    observer_contexts_free(g_state);
 
     /* Reset userland API state */
     g_state->manual_span_count = 0;

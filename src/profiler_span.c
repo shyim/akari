@@ -231,8 +231,8 @@ int profiler_current_span_index(profiler_state_t *state, uint32_t *span_index)
 {
     if (!state || !span_index) return 0;
 
-    for (int i = (int)state->stack_depth - 1; i >= 0; i--) {
-        size_t idx = state->stack[i];
+    for (int i = (int)state->context->stack_depth - 1; i >= 0; i--) {
+        size_t idx = state->context->stack[i];
         if (idx != (size_t)-1 && idx < state->span_count) {
             *span_index = (uint32_t)idx;
             return 1;
@@ -550,14 +550,18 @@ static void compact_spans(profiler_state_t *state, size_t drop_index,
         return;
     }
 
-    for (size_t i = 0; i < state->stack_depth; i++) {
-        size_t old_index = state->stack[i];
-        if (old_index == (size_t)-1) continue;
-        if (old_index < old_count && remap[old_index] != SIZE_MAX) {
-            state->stack[i] = remap[old_index];
-        } else {
-            state->stack[i] = (size_t)-1;
+    /* Suspended Fibers keep indices too; remap every context. */
+    for (profiler_context_t *ctx = &state->main_context; ctx; ctx = ctx->next) {
+        for (size_t i = 0; i < ctx->stack_depth; i++) {
+            size_t old_index = ctx->stack[i];
+            ctx->stack[i] = old_index < old_count ? remap[old_index] : SIZE_MAX;
         }
+        ctx->parent_index = ctx->parent_index < old_count
+            ? remap[ctx->parent_index] : SIZE_MAX;
+    }
+    for (size_t i = 0; i < new_count; i++) {
+        size_t parent = state->spans[i].parent_index;
+        state->spans[i].parent_index = parent < old_count ? remap[parent] : SIZE_MAX;
     }
 
     int manual_count = 0;
@@ -668,6 +672,21 @@ void profiler_drop_span(profiler_state_t *state, size_t span_index)
 
     profiler_span_t dropped = state->spans[span_index];
 
+    /* Use ancestry, not overlapping timestamps: another Fiber can run during
+     * this span's lifetime without being nested beneath it. Do this before
+     * rewriting parent indices so indirect descendants still find the span. */
+    for (size_t i = 0; i < state->span_count; i++) {
+        profiler_span_t *span = &state->spans[i];
+        if (span->depth <= dropped.depth) continue;
+        for (size_t parent = span->parent_index; parent < state->span_count;
+             parent = state->spans[parent].parent_index) {
+            if (parent == span_index) {
+                span->depth--;
+                break;
+            }
+        }
+    }
+
     /* A duration threshold may reject a parent only after its nested calls have
      * completed. Preserve those calls by parenting direct children to the
      * rejected span's parent before compacting the span array. */
@@ -677,6 +696,7 @@ void profiler_drop_span(profiler_state_t *state, size_t span_index)
         profiler_span_t *span = &state->spans[i];
         if (span->has_parent &&
             memcmp(span->parent_span_id, dropped.span_id, sizeof(dropped.span_id)) == 0) {
+            span->parent_index = dropped.parent_index;
             if (dropped.has_parent) {
                 memcpy(span->parent_span_id, dropped.parent_span_id,
                        sizeof(span->parent_span_id));
@@ -687,12 +707,13 @@ void profiler_drop_span(profiler_state_t *state, size_t span_index)
             }
         }
 
-        /* stacktrace.depth represents the observed call depth. All spans whose
-         * lifetime is contained by the rejected span lose one visible level. */
-        if (span->depth > dropped.depth &&
-            span->start_time_ns >= dropped.start_time_ns &&
-            (dropped.end_time_ns == 0 || span->start_time_ns <= dropped.end_time_ns)) {
-            span->depth--;
+    }
+
+    for (profiler_context_t *ctx = &state->main_context; ctx; ctx = ctx->next) {
+        if (ctx->has_parent && memcmp(ctx->parent_span_id, dropped.span_id, 16) == 0) {
+            ctx->parent_index = dropped.parent_index;
+            memcpy(ctx->parent_span_id, dropped.parent_span_id, 16);
+            ctx->has_parent = dropped.has_parent;
         }
     }
 

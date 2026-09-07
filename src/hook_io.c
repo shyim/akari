@@ -183,8 +183,8 @@ static void mark_http_stream(profiler_state_t *state, profiler_span_t *span,
 
     /* These hooks are registered by the mixed I/O module, so correct the
      * current operation's layer when its path resolves to HTTP. */
-    if (state->layer_stack_overflow == 0 && state->layer_stack_depth > 0) {
-        state->layer_stack[state->layer_stack_depth - 1].layer = AKARI_LAYER_HTTP;
+    if (state->context->layer_stack_overflow == 0 && state->context->layer_stack_depth > 0) {
+        state->context->layer_stack[state->context->layer_stack_depth - 1].layer = AKARI_LAYER_HTTP;
     }
 }
 

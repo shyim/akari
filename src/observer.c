@@ -13,13 +13,12 @@
  *   - Single callback pair (begin + end) for both userland and internal functions
  *   - Registered once at MINIT, active for the lifetime of the process
  *
- * The observer_init callback is called for every function invocation. It returns
- * the begin/end handlers only when profiling is active (g_state->active).
- * When profiling is off, it returns {NULL, NULL} — observer overhead is zero
- * because PHP skips functions with no handlers.
+ * Zend caches observer_init's verdict per function. Always install handlers
+ * and check runtime activation inside them so manual enable works even for
+ * functions already called while tracing was disabled.
  *
  * Architecture:
- *   init    → check g_state->active → return handlers or {NULL, NULL}
+ *   init    → install handlers independently of activation
  *   begin   → lookup hook / check trace flags → create span → pre_hook → push
  *   end     → pop → set end time → check thresholds → post_hook → maybe flush
  */
@@ -28,6 +27,89 @@
 
 static void observer_fcall_begin(zend_execute_data *execute_data);
 static void observer_fcall_end(zend_execute_data *execute_data, zval *return_value);
+
+void observer_contexts_free(profiler_state_t *state)
+{
+    profiler_context_t *ctx = state->main_context.next;
+    while (ctx) {
+        profiler_context_t *next = ctx->next;
+        free(ctx);
+        ctx = next;
+    }
+    memset(&state->main_context, 0, sizeof(state->main_context));
+    state->main_context.parent_index = SIZE_MAX;
+    state->context = &state->main_context;
+}
+
+void observer_contexts_reset(profiler_state_t *state)
+{
+    observer_contexts_free(state);
+    state->context->fiber = EG(current_fiber_context);
+}
+
+static void observer_fiber_switch(zend_fiber_context *from, zend_fiber_context *to)
+{
+    profiler_state_t *state = g_state;
+    if (!state || !state->active) return;
+
+    profiler_context_t *target = &state->main_context;
+    while (target && target->fiber != to) target = target->next;
+    if (!target) {
+        target = calloc(1, sizeof(*target));
+        if (!target) {
+            /* Never continue with another Fiber's stack on allocation failure. */
+            profiler_rshutdown();
+            return;
+        }
+        target->fiber = to;
+        target->parent_index = SIZE_MAX;
+        uint32_t parent;
+        if (profiler_current_span_index(state, &parent)) {
+            target->parent_index = parent;
+            memcpy(target->parent_span_id, state->spans[parent].span_id, 16);
+            target->has_parent = 1;
+        }
+        target->next = state->main_context.next;
+        state->main_context.next = target;
+    }
+
+    uint64_t now = realtime_ns();
+    state->context->fiber = from;
+    state->context->suspended_at_ns = now;
+    if (target->suspended_at_ns && now > target->suspended_at_ns) {
+        uint64_t suspended = now - target->suspended_at_ns;
+        for (size_t i = 0; i < target->layer_stack_depth; i++) {
+            target->layer_stack[i].start_ns += suspended;
+        }
+    }
+    target->suspended_at_ns = 0;
+    state->context = target;
+}
+
+static void observer_fiber_destroy(zend_fiber_context *fiber)
+{
+    profiler_state_t *state = g_state;
+    if (!state) return;
+    /* The embedded context can belong to a Fiber if enable() was called
+     * inside it. Retire its key too, so allocator reuse cannot revive it. */
+    if (state->main_context.fiber == fiber) {
+        profiler_context_t *next = state->main_context.next;
+        memset(&state->main_context, 0, sizeof(state->main_context));
+        state->main_context.parent_index = SIZE_MAX;
+        state->main_context.next = next;
+    }
+    profiler_context_t **link = &state->main_context.next;
+    while (*link) {
+        profiler_context_t *ctx = *link;
+        if (ctx->fiber == fiber) {
+            *link = ctx->next;
+            if (state->context == ctx) state->context = &state->main_context;
+            free(ctx);
+            return;
+        }
+        link = &ctx->next;
+    }
+}
 
 /* ── Layer attribution ──
  *
@@ -48,11 +130,11 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
  * stays correct. */
 static inline void layer_push(profiler_state_t *state, uint8_t layer, uint64_t now_ns)
 {
-    if (state->layer_stack_depth >= PROFILER_LAYER_STACK_MAX) {
-        state->layer_stack_overflow++;
+    if (state->context->layer_stack_depth >= PROFILER_LAYER_STACK_MAX) {
+        state->context->layer_stack_overflow++;
         return;
     }
-    profiler_layer_frame_t *f = &state->layer_stack[state->layer_stack_depth++];
+    profiler_layer_frame_t *f = &state->context->layer_stack[state->context->layer_stack_depth++];
     f->layer = layer;
     f->start_ns = now_ns;
     f->child_ns = 0;
@@ -60,17 +142,17 @@ static inline void layer_push(profiler_state_t *state, uint8_t layer, uint64_t n
 
 static inline void layer_pop(profiler_state_t *state, uint64_t now_ns)
 {
-    if (state->layer_stack_overflow > 0) {
-        state->layer_stack_overflow--;
+    if (state->context->layer_stack_overflow > 0) {
+        state->context->layer_stack_overflow--;
         return;
     }
-    if (state->layer_stack_depth == 0) return;
-    profiler_layer_frame_t *f = &state->layer_stack[--state->layer_stack_depth];
+    if (state->context->layer_stack_depth == 0) return;
+    profiler_layer_frame_t *f = &state->context->layer_stack[--state->context->layer_stack_depth];
     uint64_t inclusive = (now_ns > f->start_ns) ? (now_ns - f->start_ns) : 0;
     /* Charge our inclusive time to the enclosing op so its self-time excludes us
      * (prevents double-counting nested calls), regardless of either layer. */
-    if (state->layer_stack_depth > 0) {
-        state->layer_stack[state->layer_stack_depth - 1].child_ns += inclusive;
+    if (state->context->layer_stack_depth > 0) {
+        state->context->layer_stack[state->context->layer_stack_depth - 1].child_ns += inclusive;
     }
     if (f->layer == AKARI_LAYER_APP || f->layer >= AKARI_LAYER_MAX) return;
     uint64_t self = (inclusive > f->child_ns) ? (inclusive - f->child_ns) : 0;
@@ -80,14 +162,15 @@ static inline void layer_pop(profiler_state_t *state, uint64_t now_ns)
 
 /* ── Stack helper: safe push with bounds check ── */
 
-static inline void stack_push(profiler_state_t *state, size_t value)
+static inline void stack_push(profiler_state_t *state, size_t value, zend_execute_data *execute_data)
 {
-    if (state->stack_depth < PROFILER_MAX_STACK) {
-        state->stack[state->stack_depth++] = value;
+    if (state->context->stack_depth < PROFILER_MAX_STACK) {
+        state->context->execute_frames[state->context->stack_depth] = execute_data;
+        state->context->stack[state->context->stack_depth++] = value;
     } else {
         /* Stack is physically full — record overflow so fcall_end can
          * skip the corresponding pop and maintain begin/end pairing. */
-        state->stack_overflow_count++;
+        state->context->stack_overflow_count++;
     }
 }
 
@@ -109,10 +192,10 @@ static size_t create_span_entry(profiler_state_t *state, zend_execute_data *exec
     /* Find parent span: walk backward through stack to skip sentinels */
     size_t parent_span_idx = 0;
     int has_stack_parent = 0;
-    if (state->stack_depth > 0) {
-        for (int i = (int)state->stack_depth - 1; i >= 0; i--) {
-            if (state->stack[i] != (size_t)-1) {
-                parent_span_idx = state->stack[i];
+    if (state->context->stack_depth > 0) {
+        for (int i = (int)state->context->stack_depth - 1; i >= 0; i--) {
+            if (state->context->stack[i] != (size_t)-1) {
+                parent_span_idx = state->context->stack[i];
                 has_stack_parent = 1;
                 break;
             }
@@ -129,23 +212,24 @@ static size_t create_span_entry(profiler_state_t *state, zend_execute_data *exec
 
     size_t span_idx = state->span_count++;
     profiler_span_t *span = &state->spans[span_idx];
+    memset(span, 0, sizeof(*span));
+    span->parent_index = SIZE_MAX;
 
     memcpy(span->trace_id, state->trace_id, 32);
     profiler_generate_hex_id(state, span->span_id, 16);
     span->frame_index = frame_idx;
     span->start_time_ns = realtime_ns();
-    span->end_time_ns = 0;       /* not yet completed */
-    span->depth = (uint32_t)state->stack_depth;
+    span->depth = (uint32_t)state->context->stack_depth;
     span->kind = hook ? hook->span_kind : SPAN_KIND_INTERNAL;
     span->status_code = SPAN_STATUS_UNSET;
-    span->name_override_len = 0;
-    span->pre_data = NULL;
-    span->skip_span = 0;
-    span->exported = 0;
-    span->min_duration_ns = 0;
 
     if (has_stack_parent) {
+        span->parent_index = parent_span_idx;
         memcpy(span->parent_span_id, state->spans[parent_span_idx].span_id, 16);
+        span->has_parent = 1;
+    } else if (state->context->has_parent) {
+        span->parent_index = state->context->parent_index;
+        memcpy(span->parent_span_id, state->context->parent_span_id, 16);
         span->has_parent = 1;
     } else if (state->root.active || state->root.end_time_ns > 0) {
         memcpy(span->parent_span_id, state->root.span_id, 16);
@@ -181,23 +265,25 @@ static uint64_t effective_min_duration_ns(const hook_entry_t *hook)
 
 static void undo_span(profiler_state_t *state, size_t span_idx)
 {
+    int completed = state->spans[span_idx].end_time_ns > 0;
     profiler_drop_span(state, span_idx);
+    if (completed) maybe_flush(state);
 }
 
 /* ── observer_init: called for every function call to decide if we observe it ── */
 
+static void observer_curl_end(zend_execute_data *execute_data, zval *return_value)
+{
+    curl_tracking_fcall_end(execute_data, return_value);
+    observer_fcall_end(execute_data, return_value);
+}
+
 static zend_observer_fcall_handlers observer_init(zend_execute_data *execute_data)
 {
-    (void)execute_data;
-    profiler_state_t *state = g_state;
-
-    /* Quick bail-out: no profiling active → no handlers, zero overhead */
-    if (!state || !state->active) {
-        zend_observer_fcall_handlers h = {NULL, NULL};
-        return h;
-    }
-
-    zend_observer_fcall_handlers h = {observer_fcall_begin, observer_fcall_end};
+    /* Zend caches this verdict per function. Gate collection in the callbacks
+     * so functions first called while disabled can still be traced later. */
+    zend_observer_fcall_handlers h = {observer_fcall_begin,
+        curl_tracking_function(execute_data) ? observer_curl_end : observer_fcall_end};
     return h;
 }
 
@@ -221,8 +307,8 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
 
     /* Defensive: max depth or no func → sentinel, no span. Layer frame already
      * pushed (stays APP); fcall_end pops it. */
-    if (state->stack_depth >= state->max_depth || !execute_data->func) {
-        stack_push(state, (size_t)-1);
+    if (state->context->stack_depth >= state->max_depth || !execute_data->func) {
+        stack_push(state, (size_t)-1, execute_data);
         return;
     }
 
@@ -241,8 +327,8 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
     /* Upgrade the layer frame from APP to this operation's real layer (db, cache,
      * http, …). A hooked call carries its module's layer; un-hooked userland and
      * #[Akari\Span] frames stay APP (derived as the remainder at finalize). */
-    if (hook && state->layer_stack_overflow == 0 && state->layer_stack_depth > 0) {
-        state->layer_stack[state->layer_stack_depth - 1].layer = hook->layer;
+    if (hook && state->context->layer_stack_overflow == 0 && state->context->layer_stack_depth > 0) {
+        state->context->layer_stack[state->context->layer_stack_depth - 1].layer = hook->layer;
     }
 
     /* Filtering: only registered hooks produce spans. Unregistered userland
@@ -258,7 +344,7 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
                                               &attr_name_len, &attr_min_duration_ns);
         }
         if (!attr_span) {
-            stack_push(state, (size_t)-1);
+            stack_push(state, (size_t)-1, execute_data);
             return;
         }
     }
@@ -266,16 +352,19 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
     /* Non-sampled ("keep-frame") requests still account layer time (above) but
      * do not build the child-span tree. Emit a sentinel so pairing holds. */
     if (!state->sampled) {
-        stack_push(state, (size_t)-1);
+        stack_push(state, (size_t)-1, execute_data);
         return;
     }
 
     if (!ensure_span_capacity(state)) {
-        stack_push(state, (size_t)-1);
+        stack_push(state, (size_t)-1, execute_data);
         return;
     }
 
     size_t span_idx = create_span_entry(state, execute_data, hook);
+    state->spans[span_idx].threshold_pending =
+        state->min_duration_ns > 0 || effective_min_duration_ns(hook) > 0 ||
+        attr_min_duration_ns > 0;
 
     /* Attribute spans carry an optional custom name and per-span threshold;
      * otherwise create_span_entry already derived "Class::method". */
@@ -299,12 +388,13 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
 
         if (pre_data == HOOK_PRE_SKIP_SPAN) {
             undo_span(state, span_idx);
-            stack_push(state, (size_t)-1);
+            stack_push(state, (size_t)-1, execute_data);
             return;
         }
     }
 
-    stack_push(state, span_idx);
+    state->spans[span_idx].threshold_pending |= state->spans[span_idx].min_duration_ns > 0;
+    stack_push(state, span_idx, execute_data);
 }
 
 /* Resolve the fate of any in-flight exception as a frame unwinds. Called for
@@ -312,7 +402,8 @@ static void observer_fcall_begin(zend_execute_data *execute_data)
  * exception unwinds through all of them. */
 static void resolve_unwinding_exception(profiler_state_t *state)
 {
-    if (EG(exception) != NULL && state->stack_depth == 0) {
+    if (EG(exception) != NULL && state->context->stack_depth == 0 &&
+        EG(current_fiber_context) == EG(main_fiber_context)) {
         /* The outermost frame is unwinding with an exception still live:
          * nothing above can catch it, so it is uncaught. Promote now, before
          * the engine's fatal-error handler clears EG(exception). This records
@@ -334,6 +425,12 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
 
     if (!state || !state->active) return;
 
+    /* enable() may have started a new session inside a call whose begin was
+     * inactive (or belonged to the previous session). Do not pop its caller. */
+    if (state->context->stack_overflow_count == 0 &&
+        (state->context->stack_depth == 0 ||
+         state->context->execute_frames[state->context->stack_depth - 1] != execute_data)) return;
+
     /* Close the layer frame first — fcall_begin pushed one for EVERY call, so
      * this pops exactly once per invocation, before any early return below.
      * now_ns is reused as the span end time to avoid a second clock read. */
@@ -344,15 +441,15 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
      * pop to maintain 1:1 begin/end pairing. The frame still unwound, so
      * resolve exceptions first — otherwise a throw escaping through an
      * overflow-dropped frame would never be promoted. */
-    if (state->stack_overflow_count > 0) {
-        state->stack_overflow_count--;
+    if (state->context->stack_overflow_count > 0) {
+        state->context->stack_overflow_count--;
         resolve_unwinding_exception(state);
         return;
     }
 
-    if (state->stack_depth == 0) return;
+    if (state->context->stack_depth == 0) return;
 
-    size_t span_idx = state->stack[--state->stack_depth];
+    size_t span_idx = state->context->stack[--state->context->stack_depth];
 
     /* Exception resolution: this frame just unwound. Runs for every frame
      * (sentinels included) since exceptions unwind through all of them. */
@@ -420,6 +517,7 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
         }
     }
 
+    span->threshold_pending = 0;
     maybe_flush(state);
 }
 
@@ -428,7 +526,8 @@ static void observer_fcall_end(zend_execute_data *execute_data, zval *return_val
 void observer_register(void)
 {
     zend_observer_fcall_register(observer_init);
+    zend_observer_fiber_switch_register(observer_fiber_switch);
+    zend_observer_fiber_destroy_register(observer_fiber_destroy);
 }
 
-/* No unregister needed — observer stays registered for process lifetime.
- * When profiling is off, observer_init returns {NULL, NULL} for zero overhead. */
+/* No unregister needed — observer stays registered for process lifetime. */

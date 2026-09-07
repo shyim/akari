@@ -47,8 +47,8 @@ static int event_dispatch_context_matches(profiler_state_t *state,
 {
     if (!event_handle || !event_name || event_name_len == 0) return 0;
 
-    for (uint32_t i = state->event_dispatch_depth; i > 0; i--) {
-        profiler_event_dispatch_entry_t *entry = &state->event_dispatch_stack[i - 1];
+    for (uint32_t i = state->context->event_dispatch_depth; i > 0; i--) {
+        profiler_event_dispatch_entry_t *entry = &state->context->event_dispatch_stack[i - 1];
         if (entry->event_handle != event_handle) continue;
         if (entry->event_name_len != event_name_len) continue;
         if (memcmp(entry->event_name, event_name, event_name_len) == 0) {
@@ -65,10 +65,10 @@ static int event_dispatch_context_push(profiler_state_t *state,
                                          size_t event_name_len)
 {
     if (!event_handle || !event_name || event_name_len == 0) return 0;
-    if (state->event_dispatch_depth >= PROFILER_EVENT_DISPATCH_STACK_MAX) return 0;
+    if (state->context->event_dispatch_depth >= PROFILER_EVENT_DISPATCH_STACK_MAX) return 0;
 
     profiler_event_dispatch_entry_t *entry =
-        &state->event_dispatch_stack[state->event_dispatch_depth++];
+        &state->context->event_dispatch_stack[state->context->event_dispatch_depth++];
     entry->event_handle = event_handle;
     entry->event_name_len = event_name_len;
     memcpy(entry->event_name, event_name, event_name_len);
@@ -138,8 +138,8 @@ static void event_dispatch_post(profiler_state_t *state, zend_execute_data *exec
     (void)span;
     (void)span_index;
 
-    if (pre_data == EVENT_DISPATCH_CONTEXT_PUSHED && state->event_dispatch_depth > 0) {
-        state->event_dispatch_depth--;
+    if (pre_data == EVENT_DISPATCH_CONTEXT_PUSHED && state->context->event_dispatch_depth > 0) {
+        state->context->event_dispatch_depth--;
     }
 }
 
