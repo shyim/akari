@@ -16,7 +16,7 @@ concurrency:
 jobs:
   php:
     name: PHP tracing
-    runs-on: codspeed-macro
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
@@ -56,7 +56,7 @@ jobs:
 
   forwarder:
     name: Go forwarder
-    runs-on: codspeed-macro
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read

@@ -2,11 +2,15 @@
 
 The [CodSpeed workflow](../.github/workflows/codspeed.yml) measures the PHP
 extension and Go forwarder on pushes to `main`, pull requests, and manual runs.
-Connect `shyim/akari` in CodSpeed and enable its **Macro Runners** for the repository
-before running the workflow. Both jobs use `codspeed-macro` for consistent walltime
-measurements and OIDC authentication; no `CODSPEED_TOKEN` secret is needed.
-See [CodSpeed's GitHub setup](https://codspeed.io/docs/integrations/ci/github-actions/configuration)
-and [Macro Runner setup](https://codspeed.io/docs/features/macro-runners).
+Both jobs use GitHub-hosted `ubuntu-latest` runners and OIDC authentication;
+no custom runners or `CODSPEED_TOKEN` secret are needed. Connect `shyim/akari`
+in CodSpeed to receive reports. See
+[CodSpeed's GitHub setup](https://codspeed.io/docs/integrations/ci/github-actions/configuration).
+
+Walltime measurements on shared GitHub runners vary with host load and hardware.
+Use results to spot trends and larger regressions, and confirm small changes with
+repeated runs on consistent hardware. CodSpeed recommends dedicated Macro Runners
+for precise walltime comparisons, but those require a GitHub organization.
 
 ## PHP extension
 
@@ -50,8 +54,8 @@ codspeed run -m walltime --skip-upload
 ```
 
 For uploaded local results, first run `codspeed auth login`, then omit
-`--skip-upload`. Local walltime results depend on the machine and its load;
-use the CI reports to compare commits.
+`--skip-upload`. Local and GitHub-hosted walltime results depend on the machine
+and its load; account for that variance when comparing commits.
 
 ## Go forwarder
 
