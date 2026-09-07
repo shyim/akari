@@ -38,6 +38,10 @@ struct hook_registry_t_tag;
 /* ── Observer API (defined in observer.c) ── */
 
 void observer_register(void);
+void observer_contexts_reset(profiler_state_t *state);
+void observer_contexts_free(profiler_state_t *state);
+int curl_tracking_function(zend_execute_data *execute_data);
+void curl_tracking_fcall_end(zend_execute_data *execute_data, zval *return_value);
 
 /* ── Shutdown lifecycle (defined in profiler.c) ── */
 

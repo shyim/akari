@@ -2,6 +2,7 @@
 #include "hook_registry.h"
 
 #include <curl/curl.h>
+#include "Zend/zend_weakrefs.h"
 
 /* ── curl class resolution (lazy — curl may be a shared extension) ──
  * The resolved CurlHandle class entry lives in module globals (per-thread under
@@ -34,8 +35,9 @@ static inline CURL *get_curl_handle_from_zval(zval *zv)
  * We track user-set CURLOPT_HTTPHEADER per curl handle so we can
  * append traceparent without clobbering user headers.
  *
- * Storage: HashTable mapping zend_object* (as uintptr_t key) → zval array.
- * Populated by curl_setopt side-effect, consumed by inject_traceparent().
+ * Storage: weak object-keyed HashTable → zval array. Zend removes entries
+ * when their CurlHandle is destroyed, before an address can be reused.
+ * Populated after successful option changes, including while tracing is off.
  */
 
 /* Per-request header tracking lives in module globals so it is per-thread
@@ -92,6 +94,10 @@ static void curl_headers_shutdown(void)
 static void curl_headers_free_all(void)
 {
     if (curl_user_headers) {
+        zend_ulong key;
+        ZEND_HASH_FOREACH_NUM_KEY(curl_user_headers, key) {
+            zend_weakrefs_hash_del(curl_user_headers, zend_weakref_key_to_object(key));
+        } ZEND_HASH_FOREACH_END();
         zend_hash_destroy(curl_user_headers);
         FREE_HASHTABLE(curl_user_headers);
         curl_user_headers = NULL;
@@ -131,17 +137,32 @@ static void store_user_headers(zval *handle_zval, zval *headers_array)
     if (!curl_user_headers || !handle_zval || Z_TYPE_P(handle_zval) != IS_OBJECT) return;
     if (!headers_array || Z_TYPE_P(headers_array) != IS_ARRAY) return;
 
-    uintptr_t key = (uintptr_t)Z_OBJ_P(handle_zval);
     zval copy;
     ZVAL_COPY(&copy, headers_array);
-    zend_hash_index_update(curl_user_headers, key, &copy);
+    zend_object *object = Z_OBJ_P(handle_zval);
+    zend_weakrefs_hash_del(curl_user_headers, object);
+    zend_weakrefs_hash_add(curl_user_headers, object, &copy);
 }
 
 static zval *get_user_headers(zval *handle_zval)
 {
     if (!curl_user_headers || !handle_zval || Z_TYPE_P(handle_zval) != IS_OBJECT) return NULL;
-    uintptr_t key = (uintptr_t)Z_OBJ_P(handle_zval);
+    zend_ulong key = zend_object_to_weakref_key(Z_OBJ_P(handle_zval));
     return zend_hash_index_find(curl_user_headers, key);
+}
+
+/* These observer callbacks remain installed independently of profiling. A
+ * reset or option change while disabled must not leave stale headers for the
+ * next enable(). Only apply changes after PHP has accepted the operation. */
+int curl_tracking_function(zend_execute_data *execute_data)
+{
+    zend_function *func = execute_data->func;
+    if (!func || func->type != ZEND_INTERNAL_FUNCTION || func->common.scope ||
+        !func->common.function_name) return 0;
+    zend_string *name = func->common.function_name;
+    return zend_string_equals_literal(name, "curl_setopt") ||
+        zend_string_equals_literal(name, "curl_setopt_array") ||
+        zend_string_equals_literal(name, "curl_reset");
 }
 
 /* ── Traceparent injection ── */
@@ -227,6 +248,26 @@ static void curl_setopt_array_side_effect(profiler_state_t *state, zend_execute_
 
     curl_headers_init();
     store_user_headers(handle_arg, headers);
+}
+
+void curl_tracking_fcall_end(zend_execute_data *execute_data, zval *return_value)
+{
+    if (EG(exception) || !return_value) return;
+    zend_string *name = execute_data->func->common.function_name;
+    if (zend_string_equals_literal(name, "curl_reset")) {
+        if (curl_user_headers && ZEND_CALL_NUM_ARGS(execute_data) >= 1) {
+            zval *handle = ZEND_CALL_ARG(execute_data, 1);
+            if (Z_TYPE_P(handle) == IS_OBJECT) {
+                zend_weakrefs_hash_del(curl_user_headers, Z_OBJ_P(handle));
+            }
+        }
+    } else if (Z_TYPE_P(return_value) == IS_TRUE) {
+        if (zend_string_equals_literal(name, "curl_setopt")) {
+            curl_setopt_side_effect(g_state, execute_data);
+        } else {
+            curl_setopt_array_side_effect(g_state, execute_data);
+        }
+    }
 }
 
 /* ── Registry callbacks ── */
@@ -412,6 +453,6 @@ void hook_curl_register(hook_registry_t *reg)
     hook_register_function(reg, "curl_multi_exec",
         HOOK_TYPE_INTERNAL, SPAN_KIND_CLIENT, curl_multi_exec_pre, NULL);
 
-    hook_register_side_effect(reg, "curl_setopt", curl_setopt_side_effect);
-    hook_register_side_effect(reg, "curl_setopt_array", curl_setopt_array_side_effect);
+    /* Option tracking uses dedicated observer end handlers, even when tracing
+     * is disabled or the call exceeds the configured span depth. */
 }

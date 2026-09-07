@@ -430,11 +430,12 @@ ZEND_FUNCTION(Akari_createSpan)
     size_t span_idx = state->span_count++;
     profiler_span_t *span = &state->spans[span_idx];
     memset(span, 0, sizeof(profiler_span_t));
+    span->parent_index = SIZE_MAX;
 
     memcpy(span->trace_id, state->trace_id, 32);
     profiler_generate_hex_id(state, span->span_id, 16);
     span->start_time_ns = realtime_ns();
-    span->depth = state->stack_depth;
+    span->depth = state->context->stack_depth;
     span->kind = SPAN_KIND_INTERNAL;
     span->status_code = SPAN_STATUS_UNSET;
     span->is_manual = 1;
@@ -450,7 +451,12 @@ ZEND_FUNCTION(Akari_createSpan)
      * when CLI root tracing is disabled. */
     uint32_t parent_span_idx;
     if (profiler_current_span_index(state, &parent_span_idx)) {
+        span->parent_index = parent_span_idx;
         memcpy(span->parent_span_id, state->spans[parent_span_idx].span_id, 16);
+        span->has_parent = 1;
+    } else if (state->context->has_parent) {
+        span->parent_index = state->context->parent_index;
+        memcpy(span->parent_span_id, state->context->parent_span_id, 16);
         span->has_parent = 1;
     } else if (state->root.active || state->root.end_time_ns > 0) {
         memcpy(span->parent_span_id, state->root.span_id, 16);
@@ -665,14 +671,17 @@ ZEND_FUNCTION(Akari_generateDistributedTracingHeaders)
         /* Find active span ID (top of stack, skipping sentinels).
          * Fall back to root span if no active child span. */
         const char *parent_id = NULL;
-        if (state->stack_depth > 0) {
-            for (int i = (int)state->stack_depth - 1; i >= 0; i--) {
-                size_t idx = state->stack[i];
+        if (state->context->stack_depth > 0) {
+            for (int i = (int)state->context->stack_depth - 1; i >= 0; i--) {
+                size_t idx = state->context->stack[i];
                 if (idx != (size_t)-1 && idx < state->span_count) {
                     parent_id = state->spans[idx].span_id;
                     break;
                 }
             }
+        }
+        if (!parent_id && state->context->has_parent) {
+            parent_id = state->context->parent_span_id;
         }
         if (!parent_id && state->root.active) {
             parent_id = state->root.span_id;

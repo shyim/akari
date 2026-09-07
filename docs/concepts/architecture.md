@@ -45,7 +45,7 @@ forwarded to the collector's `/v1/logs` endpoint (spans go to `/v1/traces`).
 | Area | Status |
 |------|--------|
 | **Memory safety** | ASAN-verified, no leaks, bounded allocations |
-| **Overhead when off** | Zero — `observer_init` returns `{NULL, NULL}` |
+| **Overhead when off** | Minimal — callbacks check activation; cURL header bookkeeping remains active for manual enable |
 | **Exception tracking** | Engine-level hook catches all exceptions, even caught ones |
 | **Extensibility conflicts** | Uses official `zend_observer` API — compatible with Xdebug, OPcache |
 | **Cross-platform** | macOS (kqueue) + Linux (timer_create / SIGEV_THREAD_ID) |

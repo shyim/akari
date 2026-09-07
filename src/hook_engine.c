@@ -84,12 +84,13 @@ static zend_op_array *profiler_compile_file(zend_file_handle *file_handle, int t
             size_t span_idx = state->span_count++;
             profiler_span_t *span = &state->spans[span_idx];
             memset(span, 0, sizeof(profiler_span_t));
+            span->parent_index = SIZE_MAX;
 
             memcpy(span->trace_id, state->trace_id, 32);
             profiler_generate_hex_id(state, span->span_id, 16);
             span->start_time_ns = t_start;
             span->end_time_ns = t_end;
-            span->depth = state->stack_depth;
+            span->depth = state->context->stack_depth;
             span->kind = SPAN_KIND_INTERNAL;
             span->status_code = SPAN_STATUS_UNSET;
 
@@ -148,12 +149,13 @@ static int profiler_gc_collect_cycles(void)
             size_t span_idx = state->span_count++;
             profiler_span_t *span = &state->spans[span_idx];
             memset(span, 0, sizeof(profiler_span_t));
+            span->parent_index = SIZE_MAX;
 
             memcpy(span->trace_id, state->trace_id, 32);
             profiler_generate_hex_id(state, span->span_id, 16);
             span->start_time_ns = t_start;
             span->end_time_ns = t_end;
-            span->depth = state->stack_depth;
+            span->depth = state->context->stack_depth;
             span->kind = SPAN_KIND_INTERNAL;
             span->status_code = SPAN_STATUS_UNSET;
 

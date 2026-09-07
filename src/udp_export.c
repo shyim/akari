@@ -354,12 +354,22 @@ static int send_datagram(const uint8_t *data, size_t len)
 
 static int span_is_exportable(profiler_state_t *state, size_t span_idx)
 {
+    const profiler_span_t *span = &state->spans[span_idx];
+    if (span->exported || span->end_time_ns == 0 || span->threshold_pending) return 0;
+    /* A completed child cannot be reparented after it has left the process.
+     * Follow local ancestry (including across Fibers) until every ancestor's
+     * duration decision is final. Exported parents have no pending ancestors. */
+    size_t parent = span->parent_index;
+    while (parent < state->span_count) {
+        if (state->spans[parent].threshold_pending) return 0;
+        parent = state->spans[parent].parent_index;
+    }
     /* Hold back spans whose exception fate is still undecided: exporting now
      * could emit a caught exception as an error, and an exported span cannot
      * be retracted. They become exportable once the pending event is resolved
      * (promoted or dropped), or at the final shutdown export. */
     if (profiler_span_has_pending_exception(state, (uint32_t)span_idx)) return 0;
-    return !state->spans[span_idx].exported && state->spans[span_idx].end_time_ns > 0;
+    return 1;
 }
 
 static void write_datagram_header(msgpack_buf_t *buf, profiler_state_t *state,

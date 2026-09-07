@@ -118,6 +118,8 @@ typedef struct {
     void *pre_data;           /* return value from pre_hook */
     int skip_span;            /* pre_hook requested to skip this span */
     int exported;             /* already shipped to forwarder */
+    size_t parent_index;     /* local parent, or SIZE_MAX; remapped on compaction */
+    int threshold_pending;   /* parent may still be dropped at observer end */
     int is_manual;            /* userland-created span finalized at shutdown */
     uint64_t min_duration_ns; /* per-span drop threshold (0 = none); used by #[Akari\Span] */
 } profiler_span_t;
@@ -309,6 +311,32 @@ typedef struct {
 struct profiler_state_s;
 typedef void (*profiler_flush_fn)(struct profiler_state_s *state, void *user_data);
 
+/* Call-local state is isolated per Zend Fiber context. The context where
+ * tracing starts is embedded; others are allocated on first switch. */
+typedef struct profiler_context_s {
+    void *fiber;
+    struct profiler_context_s *next;
+    uint64_t suspended_at_ns;
+    size_t parent_index;
+    char parent_span_id[16];
+    int has_parent;
+    /* Call stack (indices into spans for open spans) */
+    size_t stack[PROFILER_MAX_STACK];
+    size_t stack_depth;
+    int stack_overflow_count;           /* pushes dropped when stack was full */
+
+    /* Layer-attribution stack (independent of the span stack). */
+    profiler_layer_frame_t layer_stack[PROFILER_LAYER_STACK_MAX];
+    size_t layer_stack_depth;
+    int layer_stack_overflow;   /* pushes dropped when the layer stack was full */
+
+    /* Logical event dispatch stack, used to collapse decorator chains. */
+    profiler_event_dispatch_entry_t event_dispatch_stack[PROFILER_EVENT_DISPATCH_STACK_MAX];
+    uint32_t event_dispatch_depth;
+
+    void *execute_frames[PROFILER_MAX_STACK];
+} profiler_context_t;
+
 /* ── Per-request trace state ── */
 
 typedef struct profiler_state_s {
@@ -369,10 +397,8 @@ typedef struct profiler_state_s {
     int root_exception_escaped;
     char root_exception_message[EXCEPTION_MESSAGE_MAX];
 
-    /* Call stack (indices into spans for open spans) */
-    size_t stack[PROFILER_MAX_STACK];
-    size_t stack_depth;
-    int stack_overflow_count;           /* pushes dropped when stack was full */
+    profiler_context_t main_context;
+    profiler_context_t *context;
 
     int active;
 
@@ -385,11 +411,6 @@ typedef struct profiler_state_s {
 
     /* Per-layer wall-time + call-count summary, exported on every request. */
     profiler_layer_totals_t layers;
-
-    /* Layer-attribution stack (independent of the span stack). */
-    profiler_layer_frame_t layer_stack[PROFILER_LAYER_STACK_MAX];
-    size_t layer_stack_depth;
-    int layer_stack_overflow;   /* pushes dropped when the layer stack was full */
 
     uint32_t max_depth;
     uint64_t min_duration_ns;   /* spans shorter than this are dropped post-execution */
@@ -414,10 +435,6 @@ typedef struct profiler_state_s {
 
     /* Userland API: service name override (set by setServiceName()) */
     char service_name_override[ROOT_ATTR_MAX];
-
-    /* Logical event dispatch stack, used to collapse decorator chains. */
-    profiler_event_dispatch_entry_t event_dispatch_stack[PROFILER_EVENT_DISPATCH_STACK_MAX];
-    uint32_t event_dispatch_depth;
 
     /* Userland API: manual span tracking */
     int manual_spans[32];  /* span indices that are manually created */
