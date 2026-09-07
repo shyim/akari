@@ -1,0 +1,19 @@
+$schema: https://raw.githubusercontent.com/CodSpeedHQ/codspeed/refs/heads/main/schemas/codspeed.schema.json
+
+options:
+  warmup-time: 1s
+  max-time: 5s
+
+benchmarks:
+  - name: php/calls-disabled
+    exec: bash benchmarks/run-php.sh calls-disabled
+  - name: php/calls-unsampled
+    exec: bash benchmarks/run-php.sh calls-unsampled
+  - name: php/calls-enabled
+    exec: bash benchmarks/run-php.sh calls-enabled
+  - name: php/spans
+    exec: bash benchmarks/run-php.sh spans
+  - name: php/logs
+    exec: bash benchmarks/run-php.sh logs
+  - name: php/sqlite
+    exec: bash benchmarks/run-php.sh sqlite

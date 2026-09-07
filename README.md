@@ -395,6 +395,10 @@ tests/
 
 ## Testing
 
+Performance benchmarks for PHP tracing and the Go forwarder run through CodSpeed.
+See [the benchmark guide](benchmarks/README.md) for workloads, local commands,
+and CI setup.
+
 ```bash
 make test                          # Run all 78 PHPT tests
 make test TESTS=tests/010*         # Run specific tests
