@@ -1,0 +1,78 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codspeed-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  php:
+    name: PHP tracing
+    runs-on: codspeed-macro
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libcurl4-openssl-dev
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # ratchet:shivammathur/setup-php@2.37.2
+        with:
+          php-version: "8.5"
+          coverage: none
+          extensions: sqlite3
+
+      - name: Build production extension
+        run: |
+          phpize
+          ./configure --enable-akari CFLAGS="-O2 -g"
+          make -j$(nproc)
+
+      - name: Smoke test PHP workloads
+        run: |
+          for scenario in calls-disabled calls-unsampled calls-enabled spans logs sqlite; do
+            bash benchmarks/run-php.sh "$scenario"
+          done
+
+      - name: Measure PHP workloads
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # ratchet:CodSpeedHQ/action@v5
+        with:
+          mode: walltime
+          # Omitting run selects the commands in the root codspeed.yml.
+
+  forwarder:
+    name: Go forwarder
+    runs-on: codspeed-macro
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # ratchet:actions/setup-go@v6
+        with:
+          go-version-file: forwarder/go.mod
+          cache-dependency-path: forwarder/go.sum
+
+      - name: Measure forwarder benchmarks
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # ratchet:CodSpeedHQ/action@v5
+        with:
+          mode: walltime
+          working-directory: forwarder
+          run: go test -bench=. ./...
