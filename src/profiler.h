@@ -17,6 +17,7 @@
 #define PROFILER_EVENT_DISPATCH_STACK_MAX 64
 #define PROFILER_EVENT_NAME_MAX 256
 #define PROFILER_MAX_TAGS 16
+#define PROFILER_MAX_MANUAL_SPANS 32
 #define PROFILER_TAG_MAX 128
 #define PROFILER_TAG_ROOT UINT32_MAX
 
@@ -437,7 +438,7 @@ typedef struct profiler_state_s {
     char service_name_override[ROOT_ATTR_MAX];
 
     /* Userland API: manual span tracking */
-    int manual_spans[32];  /* span indices that are manually created */
+    int manual_spans[PROFILER_MAX_MANUAL_SPANS];
     int manual_span_count;
 
     /* #[Akari\Span] attribute lookup cache (HashTable*, op_array-keyed).

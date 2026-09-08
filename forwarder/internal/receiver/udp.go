@@ -4,10 +4,12 @@ import (
 	"context"
 	"log"
 	"net"
+	"os"
 	"sync/atomic"
 	"time"
 
 	"github.com/shyim/akari-forwarder/internal/buffer"
+	"github.com/shyim/akari-forwarder/internal/transform"
 )
 
 const (
@@ -40,22 +42,27 @@ func New(addr string, buf *buffer.Buffer) *UDPReceiver {
 
 // Run binds a UDP socket and reads datagrams in a loop until ctx is cancelled.
 func (r *UDPReceiver) Run(ctx context.Context) error {
-	pc, err := net.ListenPacket("udp", r.addr)
+	key := os.Getenv("AKARI_UDP_KEY")
+	addr, err := resolveListen(r.addr, key)
+	if err != nil {
+		return err
+	}
+	pc, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return err
 	}
 	defer pc.Close()
 
 	// Try to increase the OS receive buffer.
-	if udpConn, ok := pc.(*net.UDPConn); ok {
-		if err := udpConn.SetReadBuffer(recvBufSize); err != nil {
-			log.Printf("warning: failed to set SO_RCVBUF to %d: %v", recvBufSize, err)
-		}
+	if err := pc.SetReadBuffer(recvBufSize); err != nil {
+		log.Printf("warning: failed to set SO_RCVBUF to %d: %v", recvBufSize, err)
 	}
 
 	log.Printf("UDP receiver listening on %s", r.addr)
 
 	readBuf := make([]byte, maxDatagramSize)
+	auth := authenticator{key: []byte(key)}
+	window, packets := time.Now(), 0
 
 	for {
 		// Check for cancellation.
@@ -71,7 +78,7 @@ func (r *UDPReceiver) Run(ctx context.Context) error {
 			return err
 		}
 
-		n, _, err := pc.ReadFrom(readBuf)
+		n, source, err := pc.ReadFromUDP(readBuf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue // deadline expired, loop back to check ctx
@@ -81,10 +88,24 @@ func (r *UDPReceiver) Run(ctx context.Context) error {
 
 		r.PacketsReceived.Add(1)
 		r.BytesReceived.Add(uint64(n))
+		now := time.Now()
+		if now.Sub(window) >= time.Second {
+			window, packets = now, 0
+		}
+		packets++
+		if packets > 2000 || (key == "" && !source.IP.IsLoopback()) {
+			r.PacketsDropped.Add(1)
+			continue
+		}
+		data, ok := auth.unwrap(readBuf[:n], now)
+		if !ok || transform.ValidateWire(data) != nil {
+			r.PacketsDropped.Add(1)
+			continue
+		}
 
 		// Copy the data so the read buffer can be reused.
-		payload := make([]byte, n)
-		copy(payload, readBuf[:n])
+		payload := make([]byte, len(data))
+		copy(payload, data)
 
 		if !r.buf.TryEnqueue(payload) {
 			r.PacketsDropped.Add(1)

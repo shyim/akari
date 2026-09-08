@@ -3,6 +3,7 @@ Akari\log records a log with severity, body, and context attributes
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 --FILE--
 <?php

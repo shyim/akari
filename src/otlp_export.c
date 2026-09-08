@@ -461,6 +461,7 @@ static void write_root_span_json(json_buf_t *jb, profiler_state_t *state)
 
 char *otlp_serialize_spans(profiler_state_t *state, const char *service_name, size_t *out_len)
 {
+    profiler_sanitize_for_export(state);
     int has_root = state && state->root.active == 0 && state->root.end_time_ns > 0;
     if (!state || (state->span_count == 0 && !has_root)) {
         if (out_len) *out_len = 0;
@@ -540,6 +541,7 @@ static void write_log_record_json(json_buf_t *jb, const profiler_log_record_t *r
 
 char *otlp_serialize_logs(profiler_state_t *state, const char *service_name, size_t *out_len)
 {
+    profiler_sanitize_for_export(state);
     if (!state || state->log_record_count == 0) {
         if (out_len) *out_len = 0;
         return NULL;

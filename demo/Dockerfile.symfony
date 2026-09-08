@@ -1,4 +1,4 @@
-FROM webdevops/php-apache:8.5
+FROM webdevops/php-apache:8.5@sha256:f2d1c569a0f64a234df684b97ead804503cf55c84ce2673f5aa6c298c520ee17
 
 # Install system deps
 RUN apt-get update && apt-get install -y \

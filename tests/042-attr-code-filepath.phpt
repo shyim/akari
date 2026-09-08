@@ -3,6 +3,7 @@ Span has non-empty code.filepath attribute
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 akari.trace_functions=1
 --FILE--

@@ -1,4 +1,4 @@
-FROM ghcr.io/friendsofshopware/shopware-demo-environment:6.7.6
+FROM ghcr.io/friendsofshopware/shopware-demo-environment:6.7.6@sha256:30c93a0a98541f3757def253e1c717f259a782d200b05009aa5902bb8c875f30
 
 USER root
 

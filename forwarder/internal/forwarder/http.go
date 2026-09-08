@@ -36,8 +36,9 @@ func NewHTTP(endpoint string, headers map[string]string) *HTTPForwarder {
 		endpoint: endpoint,
 		headers:  headers,
 		client: &http.Client{
-			Transport: transport,
-			Timeout:   10 * time.Second,
+			Transport:     transport,
+			Timeout:       10 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}
 }
@@ -65,10 +66,14 @@ func (f *HTTPForwarder) Forward(ctx context.Context, payload []byte, signal Sign
 		return fmt.Errorf("sending request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	// Bound reads for both success and failure, including fast hostile peers.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return fmt.Errorf("reading collector response: %w", err)
+	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("OTLP endpoint returned status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("OTLP endpoint returned status %d: %q", resp.StatusCode, body)
 	}
 
 	return nil

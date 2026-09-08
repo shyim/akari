@@ -362,36 +362,7 @@ static void curl_exec_post(profiler_state_t *state, zend_execute_data *execute_d
 
     char *url = NULL;
     curl_easy_getinfo(ch, CURLINFO_EFFECTIVE_URL, &url);
-    if (url) {
-        size_t len = strlen(url);
-        if (len >= PROFILER_HTTP_URL_MAX) len = PROFILER_HTTP_URL_MAX - 1;
-        memcpy(attr->url, url, len);
-        attr->url[len] = '\0';
-        attr->url_len = len;
-
-        const char *p = url;
-        if (strncmp(p, "http://", 7) == 0) p += 7;
-        else if (strncmp(p, "https://", 8) == 0) p += 8;
-
-        const char *slash = strchr(p, '/');
-        const char *colon = strchr(p, ':');
-        if (colon && (!slash || colon < slash)) {
-            size_t hlen = (size_t)(colon - p);
-            if (hlen < sizeof(attr->server_address)) {
-                memcpy(attr->server_address, p, hlen);
-                attr->server_address[hlen] = '\0';
-            }
-            attr->server_port = (uint16_t)atoi(colon + 1);
-        } else if (slash) {
-            size_t hlen = (size_t)(slash - p);
-            if (hlen < sizeof(attr->server_address)) {
-                memcpy(attr->server_address, p, hlen);
-                attr->server_address[hlen] = '\0';
-            }
-        } else {
-            snprintf(attr->server_address, sizeof(attr->server_address), "%s", p);
-        }
-    }
+    if (url) profiler_set_http_url(attr, url, strlen(url));
 
     char *method = NULL;
     curl_easy_getinfo(ch, CURLINFO_EFFECTIVE_METHOD, &method);

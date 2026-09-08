@@ -43,7 +43,7 @@ Zensical is a Python package. Install it into a virtual environment:
 
     ```bash
     uv venv
-    uv pip install zensical
+    uv pip install --require-hashes -r .github/requirements-docs.txt
     ```
 
 === "pip"
@@ -51,7 +51,7 @@ Zensical is a Python package. Install it into a virtual environment:
     ```bash
     python3 -m venv .venv
     source .venv/bin/activate
-    pip install zensical
+    pip install --require-hashes -r .github/requirements-docs.txt
     ```
 
 Then start the live-reloading preview server from the repository root:
@@ -106,7 +106,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
-      - run: pip install zensical
+      - run: pip install --require-hashes -r .github/requirements-docs.txt
       - run: zensical build --clean
       - uses: actions/upload-pages-artifact@v5
         with:
@@ -165,3 +165,16 @@ Zensical supports the full Material for MkDocs authoring feature set —
 admonitions, content tabs, code annotations, Mermaid diagrams, and more. See
 the [Zensical documentation](https://zensical.org/docs/) for the complete
 authoring reference.
+
+## Updating locked dependencies
+
+Use Python 3.13 and edit `.github/requirements-docs.in`, then regenerate the
+complete dependency lock:
+
+```bash
+pip-compile --generate-hashes --output-file=.github/requirements-docs.txt .github/requirements-docs.in
+```
+
+Review changed versions and hashes before committing. The workflow builds docs
+without deployment credentials and grants Pages/OIDC write permissions only
+to the separate deployment job.

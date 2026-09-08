@@ -3,6 +3,7 @@ Exception event: a caught exception before an uncaught one is dropped, only the 
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 --FILE--
 <?php

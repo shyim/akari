@@ -6,6 +6,7 @@ include __DIR__ . '/_skipif.inc';
 if (!extension_loaded('sqlite3')) die('skip sqlite3 not available');
 ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 akari.trace_functions=0
 --FILE--

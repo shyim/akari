@@ -14,7 +14,7 @@ import (
 // carries either spans (from udp_export_spans) or log records (from
 // udp_export_logs), never both — but the type tolerates either being present.
 type Datagram struct {
-	Version     uint8       `msgpack:"v"`
+	Version     uint64      `msgpack:"v"`
 	ServiceName string      `msgpack:"sn"`
 	TraceID     []byte      `msgpack:"ti"`
 	Spans       []Span      `msgpack:"sp,omitempty"`
@@ -42,8 +42,8 @@ type Span struct {
 	SpanID       []byte `msgpack:"s"`
 	ParentSpanID []byte `msgpack:"p"`
 	Name         string `msgpack:"n"`
-	Kind         uint8  `msgpack:"k"`
-	StatusCode   uint8  `msgpack:"sc"`
+	Kind         uint64 `msgpack:"k"`
+	StatusCode   uint64 `msgpack:"sc"`
 	StatusMsg    string `msgpack:"sm"`
 	StartNs      uint64 `msgpack:"ts"`
 	EndNs        uint64 `msgpack:"te"`
@@ -305,6 +305,9 @@ func buildResourceAttrs(serviceName string) []otlpKeyValue {
 
 // Transform decodes a msgpack datagram into OTLP JSON bodies (traces and/or logs).
 func Transform(data []byte) (Result, error) {
+	if err := ValidateWire(data); err != nil {
+		return Result{}, err
+	}
 	var dg Datagram
 	if err := msgpack.Unmarshal(data, &dg); err != nil {
 		return Result{}, fmt.Errorf("msgpack decode: %w", err)
@@ -312,6 +315,9 @@ func Transform(data []byte) (Result, error) {
 
 	if dg.Version != 1 {
 		return Result{}, fmt.Errorf("unsupported protocol version: %d", dg.Version)
+	}
+	if err := validateDatagram(&dg); err != nil {
+		return Result{}, err
 	}
 
 	traceID := string(dg.TraceID)

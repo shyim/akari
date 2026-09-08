@@ -3,6 +3,7 @@ Exception event: an uncaught exception is still promoted when the stack overflow
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 --FILE--
 <?php

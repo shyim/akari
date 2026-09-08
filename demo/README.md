@@ -5,6 +5,7 @@ See traces and logs from PHP applications in Grafana in 30 seconds.
 ## Quick start
 
 ```bash
+export AKARI_UDP_KEY="$(openssl rand -hex 32)"
 docker compose up --build
 ```
 

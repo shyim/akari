@@ -10,6 +10,7 @@ if (!@socket_bind($probe, '127.0.0.1', 14324)) die('skip udp port 14324 busy');
 socket_close($probe);
 ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=0
 akari.trace_cli=1
 akari.udp_host=127.0.0.1

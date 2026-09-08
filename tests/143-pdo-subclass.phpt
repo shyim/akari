@@ -6,6 +6,7 @@ include __DIR__ . '/_skipif.inc';
 if (!extension_loaded('pdo_sqlite')) die('skip pdo_sqlite not available');
 ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 akari.trace_functions=0
 --FILE--

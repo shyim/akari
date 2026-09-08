@@ -3,6 +3,7 @@ Exception event: HttpKernel::handleThrowable records exception event
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 akari.trace_functions=0
 --FILE--

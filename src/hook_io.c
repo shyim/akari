@@ -135,41 +135,7 @@ static void record_http_stream_attr(profiler_state_t *state, uint32_t span_index
     attr->span_index = span_index;
     snprintf(attr->method, sizeof(attr->method), "%s", method);
 
-    if (url_len >= PROFILER_HTTP_URL_MAX) url_len = PROFILER_HTTP_URL_MAX - 1;
-    memcpy(attr->url, url, url_len);
-    attr->url[url_len] = '\0';
-    attr->url_len = url_len;
-
-    /* Extract host and optional port from the URL authority. */
-    const char *authority = url + (strncasecmp(url, "https://", 8) == 0 ? 8 : 7);
-    const char *authority_end = authority;
-    while (*authority_end && *authority_end != '/' && *authority_end != '?'
-            && *authority_end != '#') {
-        authority_end++;
-    }
-
-    const char *port_sep = NULL;
-    const char *host_end = authority_end;
-    if (authority < authority_end && *authority == '[') {
-        const char *bracket = memchr(authority, ']', (size_t)(authority_end - authority));
-        if (bracket) {
-            host_end = bracket + 1;
-            if (host_end < authority_end && *host_end == ':') port_sep = host_end;
-        }
-    } else {
-        port_sep = memchr(authority, ':', (size_t)(authority_end - authority));
-        if (port_sep) host_end = port_sep;
-    }
-
-    size_t host_len = (size_t)(host_end - authority);
-    if (host_len >= sizeof(attr->server_address)) host_len = sizeof(attr->server_address) - 1;
-    if (host_len > 0) {
-        memcpy(attr->server_address, authority, host_len);
-        attr->server_address[host_len] = '\0';
-    }
-    if (port_sep && port_sep + 1 < authority_end) {
-        attr->server_port = (uint16_t)atoi(port_sep + 1);
-    }
+    profiler_set_http_url(attr, url, url_len);
 
     state->http_attr_count++;
 }

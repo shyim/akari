@@ -1,5 +1,7 @@
 services:
   php:
+    environment:
+      AKARI_UDP_KEY: ${AKARI_UDP_KEY:?Set a random AKARI_UDP_KEY of at least 32 bytes}
     build:
       context: .
       dockerfile: demo/Dockerfile.php
@@ -9,6 +11,8 @@ services:
       - forwarder
 
   symfony:
+    environment:
+      AKARI_UDP_KEY: ${AKARI_UDP_KEY:?Set a random AKARI_UDP_KEY of at least 32 bytes}
     build:
       context: .
       dockerfile: demo/Dockerfile.symfony
@@ -23,6 +27,7 @@ services:
       dockerfile: demo/Dockerfile.shopware
     environment:
       APP_URL: http://localhost:8084
+      AKARI_UDP_KEY: ${AKARI_UDP_KEY:?Set a random AKARI_UDP_KEY of at least 32 bytes}
     ports:
       - "8084:8000"
     depends_on:
@@ -34,6 +39,7 @@ services:
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4318
       - OTEL_FORWARDER_LISTEN=0.0.0.0:4319
+      - AKARI_UDP_KEY=${AKARI_UDP_KEY:?Set a random AKARI_UDP_KEY of at least 32 bytes}
     depends_on:
       - lgtm
 
@@ -41,7 +47,7 @@ services:
   # OTLP receiver on 4317/4318. Traces land in Tempo, logs in Loki, both
   # viewable (and cross-linked) in Grafana.
   lgtm:
-    image: grafana/otel-lgtm:latest
+    image: grafana/otel-lgtm@sha256:7fd8eaad6bb64897ad5f644c8e15ee67c3204c97168f4bdba122adbf8f60e3c4
     ports:
       - "3000:3000"   # Grafana UI
       - "3200:3200"   # Tempo HTTP API

@@ -142,7 +142,7 @@ static void cli_span_name(profiler_root_span_t *root)
     char *cmd = root->process_command_line;
     size_t cmdcap = sizeof(root->process_command_line);
     size_t cmdlen = append_cli_arg(cmd, 0, cmdcap, (php_bin && php_bin[0]) ? php_bin : "php");
-    for (int i = 0; i < argc && argv && argv[i]; i++) {
+    for (int i = 0; AKARI_G(capture_sensitive) && i < argc && argv && argv[i]; i++) {
         cmdlen = append_cli_arg(cmd, cmdlen, cmdcap, argv[i]);
     }
 
@@ -153,9 +153,9 @@ static void cli_span_name(profiler_root_span_t *root)
         const char *base = strrchr(script, '/');
         base = base ? base + 1 : script;
         namelen = append_cli_arg(name, 0, sizeof(name), base);
-        snprintf(root->url_path, sizeof(root->url_path), "%s", script);
+        if (AKARI_G(capture_sensitive)) snprintf(root->url_path, sizeof(root->url_path), "%s", script);
     }
-    for (int i = 1; i < argc && argv && argv[i]; i++) {
+    for (int i = 1; AKARI_G(capture_sensitive) && i < argc && argv && argv[i]; i++) {
         namelen = append_cli_arg(name, namelen, sizeof(name), argv[i]);
     }
 
@@ -221,8 +221,8 @@ void init_root_span(profiler_state_t *state)
                  SG(request_info).request_method);
     }
     if (SG(request_info).request_uri) {
-        snprintf(root->url_path, sizeof(root->url_path), "%s",
-                 SG(request_info).request_uri);
+        profiler_copy_url(root->url_path, sizeof(root->url_path),
+                          SG(request_info).request_uri, strlen(SG(request_info).request_uri));
     }
 
     /* URL scheme */

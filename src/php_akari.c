@@ -11,6 +11,11 @@
  * This is their single storage definition. */
 ZEND_DECLARE_MODULE_GLOBALS(akari)
 
+static PHP_INI_DISP(akari_secret_displayer)
+{
+    PUTS("[redacted]");
+}
+
 /* INI entries */
 PHP_INI_BEGIN()
     STD_PHP_INI_BOOLEAN("akari.enable", "0", PHP_INI_SYSTEM, OnUpdateBool, enable, zend_akari_globals, akari_globals)
@@ -21,6 +26,8 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("akari.sample_rate", "1.0", PHP_INI_SYSTEM, OnUpdateReal, sample_rate, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.disable_at_memory_percentage", "0", PHP_INI_SYSTEM, OnUpdateReal, disable_at_memory_percentage, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.udp_host", "127.0.0.1", PHP_INI_SYSTEM, OnUpdateString, udp_host, zend_akari_globals, akari_globals)
+    STD_PHP_INI_ENTRY_EX("akari.udp_key", "", PHP_INI_SYSTEM, OnUpdateString, udp_key, zend_akari_globals, akari_globals, akari_secret_displayer)
+    STD_PHP_INI_BOOLEAN("akari.capture_sensitive", "0", PHP_INI_SYSTEM, OnUpdateBool, capture_sensitive, zend_akari_globals, akari_globals)
     STD_PHP_INI_ENTRY("akari.udp_port", "4319", PHP_INI_SYSTEM, OnUpdateLong, udp_port, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_compile", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_compile, zend_akari_globals, akari_globals)
     STD_PHP_INI_BOOLEAN("akari.trace_gc", "0", PHP_INI_SYSTEM, OnUpdateBool, trace_gc, zend_akari_globals, akari_globals)
@@ -44,6 +51,8 @@ static PHP_GINIT_FUNCTION(akari)
     akari_globals->sample_rate = 1.0;
     akari_globals->disable_at_memory_percentage = 0;
     akari_globals->udp_host = NULL;
+    akari_globals->udp_key = NULL;
+    akari_globals->capture_sensitive = 0;
     akari_globals->udp_port = 4319;
     akari_globals->trace_compile = 0;
     akari_globals->trace_gc = 0;
@@ -423,7 +432,7 @@ ZEND_FUNCTION(Akari_createSpan)
         RETURN_FALSE;
     }
 
-    if (!ensure_span_capacity(state)) {
+    if (state->manual_span_count >= PROFILER_MAX_MANUAL_SPANS || !ensure_span_capacity(state)) {
         RETURN_FALSE;
     }
 
@@ -467,9 +476,7 @@ ZEND_FUNCTION(Akari_createSpan)
     }
 
     /* Track as manual span */
-    if (state->manual_span_count < 32) {
-        state->manual_spans[state->manual_span_count++] = (int)span_idx;
-    }
+    state->manual_spans[state->manual_span_count++] = (int)span_idx;
 
     /* Return span_id as hex string (already ASCII hex from profiler_generate_hex_id) */
     RETURN_STRINGL(span->span_id, 16);

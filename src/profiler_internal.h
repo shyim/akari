@@ -19,6 +19,11 @@
 #include <string.h>
 #include <time.h>
 
+void profiler_sanitize_for_export(profiler_state_t *state);
+void profiler_sanitize_url(char *url);
+void profiler_copy_url(char *dst, size_t cap, const char *url, size_t len);
+void profiler_set_http_url(profiler_http_attr_t *attr, const char *url, size_t len);
+
 static inline size_t profiler_clamp_snprintf_len(int n, size_t buf_size)
 {
     if (n <= 0 || buf_size == 0) {

@@ -25,7 +25,9 @@ jobs:
 
       - name: Run Go tests
         working-directory: forwarder
-        run: go test ./...
+        run: |
+          go test -race ./...
+          go vet ./...
 
   linux:
     runs-on: ubuntu-latest

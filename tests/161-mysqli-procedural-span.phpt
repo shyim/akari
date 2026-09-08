@@ -9,6 +9,7 @@ if ($m->connect_error) die('skip MySQL server not available');
 $m->close();
 ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 akari.trace_functions=0
 --FILE--

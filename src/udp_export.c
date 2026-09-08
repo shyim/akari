@@ -8,11 +8,21 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include "ext/hash/php_hash.h"
+#include "ext/hash/php_hash_sha.h"
+#include "ext/random/php_random.h"
 
 /* ── UDP socket state ── */
 
 static int g_udp_fd = -1;
 static struct sockaddr_in g_udp_addr;
+
+static const char *udp_key(void)
+{
+    if (AKARI_G(udp_key) && AKARI_G(udp_key)[0]) return AKARI_G(udp_key);
+    const char *key = getenv("AKARI_UDP_KEY");
+    return key ? key : "";
+}
 
 int udp_export_init(const char *host, int port)
 {
@@ -34,6 +44,15 @@ int udp_export_init(const char *host, int port)
 
     memcpy(&g_udp_addr, result->ai_addr, sizeof(g_udp_addr));
     freeaddrinfo(result);
+
+    const char *key = udp_key();
+    if ((key[0] && strlen(key) < 32) ||
+        (!key[0] && (ntohl(g_udp_addr.sin_addr.s_addr) >> 24) != 127)) {
+        close(g_udp_fd);
+        g_udp_fd = -1;
+        php_error_docref(NULL, E_WARNING, "network UDP export requires an AKARI_UDP_KEY of at least 32 bytes");
+        return -1;
+    }
 
     return 0;
 }
@@ -347,6 +366,42 @@ static void write_root_span_msgpack(msgpack_buf_t *buf, profiler_state_t *state)
 static int send_datagram(const uint8_t *data, size_t len)
 {
     if (g_udp_fd < 0 || len == 0 || len > UDP_MAX_DATAGRAM_SIZE) return 0;
+    uint8_t packet[UDP_MAX_DATAGRAM_SIZE + 60];
+    const char *key = udp_key();
+    if (key[0]) {
+        size_t key_len = strlen(key);
+        if (key_len < 32) return 0;
+        memcpy(packet, "AKR1", 4);
+        uint64_t seconds = (uint64_t)time(NULL);
+        for (int i = 0; i < 8; i++) packet[4+i] = (uint8_t)(seconds >> (56-8*i));
+        if (php_random_bytes_silent(packet+12, 16) != SUCCESS) return 0;
+        memcpy(packet+60, data, len);
+
+        /* HMAC-SHA256 via PHP hash, covering header and payload. */
+        uint8_t block[64] = {0}, inner[32];
+        PHP_SHA256_CTX ctx;
+        if (key_len > sizeof(block)) {
+            PHP_SHA256Init(&ctx);
+            PHP_SHA256Update(&ctx, (const unsigned char *)key, key_len);
+            PHP_SHA256Final(block, &ctx);
+        } else memcpy(block, key, key_len);
+        for (size_t i = 0; i < sizeof(block); i++) block[i] ^= 0x36;
+        PHP_SHA256Init(&ctx);
+        PHP_SHA256Update(&ctx, block, sizeof(block));
+        PHP_SHA256Update(&ctx, packet, 28);
+        PHP_SHA256Update(&ctx, data, len);
+        PHP_SHA256Final(inner, &ctx);
+        for (size_t i = 0; i < sizeof(block); i++) block[i] ^= 0x36 ^ 0x5c;
+        PHP_SHA256Init(&ctx);
+        PHP_SHA256Update(&ctx, block, sizeof(block));
+        PHP_SHA256Update(&ctx, inner, sizeof(inner));
+        PHP_SHA256Final(packet+28, &ctx);
+        ZEND_SECURE_ZERO(block, sizeof(block));
+        data = packet;
+        len += 60;
+    } else if ((ntohl(g_udp_addr.sin_addr.s_addr) >> 24) != 127) {
+        return 0;
+    }
     ssize_t sent = sendto(g_udp_fd, data, len, 0,
                           (struct sockaddr *)&g_udp_addr, sizeof(g_udp_addr));
     return (sent == (ssize_t)len);
@@ -450,6 +505,7 @@ static int send_span_batch(profiler_state_t *state, const char *service_name,
 void udp_export_spans(profiler_state_t *state, const char *service_name)
 {
     if (g_udp_fd < 0 || !state) return;
+    profiler_sanitize_for_export(state);
 
     int include_root = (state->root.end_time_ns > 0);
 
@@ -585,6 +641,7 @@ static size_t encoded_log_size(profiler_state_t *state, size_t log_idx)
 void udp_export_logs(profiler_state_t *state, const char *service_name)
 {
     if (g_udp_fd < 0 || !state) return;
+    profiler_sanitize_for_export(state);
     if (state->log_records_sent >= state->log_record_count) return;
 
     size_t i = state->log_records_sent;

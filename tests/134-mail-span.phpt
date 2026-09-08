@@ -6,6 +6,7 @@ include __DIR__ . '/_skipif.inc';
 if (PHP_OS_FAMILY === 'Windows') die('skip not on Windows');
 ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 akari.trace_functions=0
 sendmail_path=/usr/bin/true

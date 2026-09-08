@@ -37,10 +37,12 @@ ZEND_BEGIN_MODULE_GLOBALS(akari)
      * rest ("keep-frame"). An inbound traceparent sampled flag overrides this. */
     double sample_rate;
     /* Safety kill-switch: if peak memory usage exceeds this percentage of
-     * memory_limit at request start, profiling is skipped for the request so the
-     * APM never contributes to an OOM. 0 (default) disables the check. */
+     * memory_limit at request start, profiling is skipped for the request to reduce profiler memory pressure.
+     * Native allocations are separate from Zend memory accounting. 0 (default) disables the check. */
     double disable_at_memory_percentage;
     char *udp_host;
+    char *udp_key;
+    zend_bool capture_sensitive;
     zend_long udp_port;
     zend_bool trace_compile;
     zend_bool trace_gc;

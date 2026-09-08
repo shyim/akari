@@ -3,6 +3,7 @@ Exception event: a caught throw earlier in the SAME open span is dropped, only t
 --SKIPIF--
 <?php include __DIR__ . '/_skipif.inc'; ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 --FILE--
 <?php

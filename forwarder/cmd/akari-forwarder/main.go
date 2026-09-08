@@ -20,8 +20,12 @@ func main() {
 	listenAddr := envOrDefault("OTEL_FORWARDER_LISTEN", "127.0.0.1:4319")
 	otlpEndpoint := envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 	bufferSize := envOrDefaultInt("OTEL_FORWARDER_BUFFER_SIZE", 16384)
+	bufferBytes := envOrDefaultInt("OTEL_FORWARDER_BUFFER_BYTES", 16*1024*1024)
 	batchSize := envOrDefaultInt("OTEL_FORWARDER_BATCH_SIZE", 64)
 	flushInterval := envOrDefaultDuration("OTEL_FORWARDER_FLUSH_INTERVAL", 100*time.Millisecond)
+	if bufferSize < 1 || bufferSize > 65536 || bufferBytes < 1 || bufferBytes > 256*1024*1024 || batchSize < 1 || batchSize > 256 || flushInterval <= 0 {
+		log.Fatal("invalid buffer, batch or flush limits")
+	}
 
 	headers, err := forwarder.ParseHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"))
 	if err != nil {
@@ -38,7 +42,7 @@ func main() {
 	}
 
 	// Create components.
-	buf := buffer.New(bufferSize)
+	buf := buffer.NewWithByteLimit(bufferSize, int64(bufferBytes))
 	recv := receiver.New(listenAddr, buf)
 	fwd := forwarder.NewHTTP(otlpEndpoint, headers)
 

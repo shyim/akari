@@ -66,7 +66,10 @@ trace samples consistently end to end.
 **Memory safety:** `akari.disable_at_memory_percentage` is an independent
 kill-switch. If peak memory usage at request start already exceeds the given
 percentage of `memory_limit`, profiling is skipped entirely for that request so
-the extension can never push a memory-pressured request into an OOM.
+profiling adds less pressure. This checks Zend usage at request start; native
+profiler allocations are separate from PHP's `memory_limit`. Use a process or
+container memory limit as well. Manual spans are limited to 32 per profiling
+session and additional `createSpan()` calls return `false`.
 
 ## Recommended configurations
 
@@ -155,3 +158,30 @@ trace id's random bits, so services sharing a trace reach the same verdict.
 - **`udp_host` / `udp_port`** must match the forwarder's
   [`OTEL_FORWARDER_LISTEN`](../reference/forwarder.md) address. The defaults
   (`127.0.0.1:4319`) assume the forwarder runs on the same host.
+
+## Sensitive data capture
+
+`akari.capture_sensitive=0` is the default. Before serialization, Akari omits
+raw database statements (including SQL, cache keys, GraphQL, shell commands,
+mail recipients and filesystem operations), database names/users, `code.filepath` attributes,
+CLI command lines, and exception messages. Log bodies, log context values and
+custom tag values become `[redacted]`. Function names, timings, status codes,
+exception types, trace relationships and explicitly chosen span/transaction
+names remain available. CLI span names include the script basename without
+arguments. Use stable, non-sensitive names and attribute keys in application
+instrumentation; these labels remain visible.
+
+Set `akari.capture_sensitive=1` in system INI only after reviewing what the
+application may export and who can read the collector. This explicitly enables
+raw application text; it does not promise secret detection. Query strings,
+fragments and user information are removed from URLs even in this mode.
+Requests use a path without its query string. URL paths and framework route,
+template and destination labels can still contain application-specific data.
+Engine-generated function names may also embed source locations.
+
+Statements are omitted by default rather than passed through the existing SQL
+normalizer, which is a display helper and does not safely cover every SQL dialect.
+
+`akari.udp_key` (system INI, default empty) supplies the transport authentication
+key. If empty, the exporter reads `AKARI_UDP_KEY`. See
+[forwarder transport security](../reference/forwarder.md#transport-security).

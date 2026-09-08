@@ -40,7 +40,7 @@ disable();
 | Function | Purpose |
 |----------|---------|
 | `enable()` / `disable()` | Turn tracing on or off at runtime |
-| `createSpan($name)` | Open a custom span |
+| `createSpan($name)` | Open a custom span; returns `false` after 32 open manual spans in a profiling session |
 | `setTransactionName($name)` / `getTransactionName()` | Override / read the root transaction name |
 | `setServiceName($name)` | Override the OTel service name for the current request |
 | `addTag($key, $value)` / `removeTag($key)` | Attach or remove an attribute on the active span |
@@ -92,7 +92,7 @@ $proc = proc_open(['php', 'bin/console', 'app:work'], $spec, $pipes, null,
 ```
 
 The incoming context also drives the `parentbased_*` samplers — see
-[Sampling](../getting-started/configuration.md#sampling).
+[Sampling](../getting-started/configuration.md#head-sampling).
 
 ## Debug introspection (debug builds only)
 

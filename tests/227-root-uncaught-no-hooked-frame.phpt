@@ -8,6 +8,7 @@ if (!$sock) die('skip udp port unavailable');
 fclose($sock);
 ?>
 --INI--
+akari.capture_sensitive=1
 akari.enable=1
 akari.udp_host=127.0.0.1
 akari.udp_port=54335
