@@ -61,24 +61,49 @@ func (p *wireParser) length(n int) (int, bool) {
 }
 
 func (p *wireParser) collection(n, depth int, isMap bool) bool {
-	if n > 512 || (isMap && n > 128) {
+	if isMap {
+		return p.mapValue(n, depth)
+	}
+	if n > 512 {
 		return false
 	}
-	var keys [128][]byte
 	for i := 0; i < n; i++ {
-		if isMap {
-			// Protocol maps only have string keys. Reject duplicates, including
-			// keys encoded with different MessagePack string length forms.
-			key, ok := p.key()
-			if !ok {
+		if !p.value(depth + 1) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *wireParser) mapValue(n, depth int) bool {
+	if n > 128 {
+		return false
+	}
+	// Store offsets into the bounded datagram rather than slices. The table
+	// stays at most half full and never allocates; arrays need no key storage.
+	var keys [256]struct{ start, length uint16 }
+	for i := 0; i < n; i++ {
+		key, ok := p.key()
+		if !ok {
+			return false
+		}
+		hash := uint32(2166136261)
+		for _, c := range key {
+			hash = (hash ^ uint32(c)) * 16777619
+		}
+		for slot := hash & 255; ; slot = (slot + 1) & 255 {
+			entry := &keys[slot]
+			if entry.length == 0 {
+				entry.start = uint16(p.pos - len(key))
+				entry.length = uint16(len(key))
+				break
+			}
+			// Compare the actual bytes on collisions, including keys encoded
+			// with different MessagePack string length forms.
+			start := int(entry.start)
+			if int(entry.length) == len(key) && bytes.Equal(p.data[start:start+len(key)], key) {
 				return false
 			}
-			for j := 0; j < i; j++ {
-				if bytes.Equal(keys[j], key) {
-					return false
-				}
-			}
-			keys[i] = key
 		}
 		if !p.value(depth + 1) {
 			return false

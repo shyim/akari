@@ -2,9 +2,11 @@ package transform
 
 import (
 	"bytes"
-	"github.com/vmihailenco/msgpack/v5"
+	"fmt"
 	"runtime"
 	"testing"
+
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 func TestRejectAllocationBombs(t *testing.T) {
@@ -45,6 +47,59 @@ func TestWireBoundaries(t *testing.T) {
 	} {
 		if ValidateWire(data) == nil {
 			t.Fatal("accepted invalid wire value")
+		}
+	}
+}
+
+func TestWireMapKeys(t *testing.T) {
+	encodeMap := func(keys []string) []byte {
+		data := []byte{0x81, 0xa1, 'x', 0xde, byte(len(keys) >> 8), byte(len(keys))}
+		for _, key := range keys {
+			encoded, err := msgpack.Marshal(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, encoded...)
+			data = append(data, 0xc0)
+		}
+		return data
+	}
+
+	// These distinct keys land in the same hash bucket. A collision must not
+	// be mistaken for a duplicate, or hide a duplicate later in the chain.
+	colliding := []string{"key-1", "key-117", "key-162", "key-188"}
+	if ValidateWire(encodeMap(colliding)) != nil {
+		t.Fatal("rejected distinct colliding keys")
+	}
+	for _, key := range colliding {
+		if ValidateWire(encodeMap(append(append([]string{}, colliding...), key))) == nil {
+			t.Fatal("accepted duplicate after hash collision")
+		}
+	}
+
+	keys := make([]string, 129)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("%0256d", i)
+	}
+	for _, count := range []int{0, 1, 127, 128, 129} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			if accepted := ValidateWire(encodeMap(keys[:count])) == nil; accepted != (count <= 128) {
+				t.Fatalf("map with %d maximal-length keys: accepted=%v", count, accepted)
+			}
+		})
+	}
+
+	// Equivalent keys remain duplicates across every string header form.
+	forms := [][]byte{{0xa1, 'v'}, {0xd9, 1, 'v'}, {0xda, 0, 1, 'v'}, {0xdb, 0, 0, 0, 1, 'v'}}
+	for _, first := range forms {
+		for _, second := range forms {
+			data := append([]byte{0x82}, first...)
+			data = append(data, 0xc0)
+			data = append(data, second...)
+			data = append(data, 0xc0)
+			if ValidateWire(data) == nil {
+				t.Fatal("accepted duplicate with different string headers")
+			}
 		}
 	}
 }
