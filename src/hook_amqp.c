@@ -97,12 +97,18 @@ static void *amqp_publish_pre(profiler_state_t *state, zend_execute_data *execut
     uint32_t num_args = ZEND_CALL_NUM_ARGS(execute_data);
     if (num_args >= 4) {
         zval *attrs_arg = ZEND_CALL_ARG(execute_data, 4);
+        ZVAL_DEREF(attrs_arg);
         if (Z_TYPE_P(attrs_arg) == IS_ARRAY) {
             char traceparent[128];
             snprintf(traceparent, sizeof(traceparent), "00-%.32s-%.16s-01",
                      state->trace_id, span->span_id);
 
+            SEPARATE_ARRAY(attrs_arg);
+
             zval *headers_zv = zend_hash_str_find(Z_ARRVAL_P(attrs_arg), "headers", 7);
+            if (headers_zv && Z_ISREF_P(headers_zv)) {
+                zend_unwrap_reference(headers_zv);
+            }
             if (headers_zv && Z_TYPE_P(headers_zv) == IS_ARRAY) {
                 SEPARATE_ARRAY(headers_zv);
                 add_assoc_string(headers_zv, "traceparent", traceparent);
