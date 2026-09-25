@@ -168,20 +168,37 @@ jobs:
         ports:
           - 11211:11211
 
+      rabbitmq:
+        image: index.docker.io/library/rabbitmq@sha256:d7af1c87c5f1eda13fcfca06db452bf3aeab6619fc3358b68535c0c02c4e52bc # ratchet:rabbitmq:3.13-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: akari
+          RABBITMQ_DEFAULT_PASS: akari
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 15
+
+    env:
+      AKARI_AMQP_USER: akari
+      AKARI_AMQP_PASS: akari
+
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # ratchet:actions/checkout@v7
 
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libcurl4-openssl-dev libmemcached-dev zlib1g-dev
+          sudo apt-get install -y -qq libcurl4-openssl-dev libmemcached-dev zlib1g-dev librabbitmq-dev
 
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # ratchet:shivammathur/setup-php@2.37.2
         with:
           php-version: "8.5"
           coverage: none
-          extensions: curl, pdo, sqlite3, session, mbstring, redis, memcached, mysqli
+          extensions: curl, pdo, sqlite3, session, mbstring, redis, memcached, mysqli, amqp
 
       - name: Wait for services
         run: |
@@ -206,17 +223,47 @@ jobs:
 
           mysqli_report(MYSQLI_REPORT_OFF);
           $deadline = time() + 90;
+          $mysqlReady = false;
           do {
               $mysqli = mysqli_init();
               if (@mysqli_real_connect($mysqli, "127.0.0.1", "root", "", "", 3306)) {
                   mysqli_close($mysqli);
                   echo "mysql ready\n";
-                  exit(0);
+                  $mysqlReady = true;
+                  break;
               }
               usleep(500000);
           } while (time() < $deadline);
 
-          fwrite(STDERR, "mysql did not become ready\n");
+          if (!$mysqlReady) {
+              fwrite(STDERR, "mysql did not become ready\n");
+              exit(1);
+          }
+
+          $user = getenv("AKARI_AMQP_USER") ?: "akari";
+          $pass = getenv("AKARI_AMQP_PASS") ?: "akari";
+          $deadline = time() + 90;
+          do {
+              try {
+                  $conn = new AMQPConnection([
+                      "host" => "127.0.0.1",
+                      "port" => 5672,
+                      "login" => $user,
+                      "password" => $pass,
+                      "connect_timeout" => 1,
+                      "read_timeout" => 1,
+                      "write_timeout" => 1,
+                  ]);
+                  $conn->connect();
+                  $conn->disconnect();
+                  echo "rabbitmq ready\n";
+                  exit(0);
+              } catch (Throwable $e) {
+                  usleep(500000);
+              }
+          } while (time() < $deadline);
+
+          fwrite(STDERR, "rabbitmq did not become ready\n");
           exit(1);
           '
 
@@ -228,7 +275,13 @@ jobs:
 
       - name: Run integration tests
         run: |
-          TEST_PHP_EXECUTABLE=$(which php) make test NO_INTERACTION=1 TESTS='tests/150-redis-span.phpt tests/151-redis-nokey-command.phpt tests/152-redis-unknown-command-skipped.phpt tests/160-mysqli-query-span.phpt tests/161-mysqli-procedural-span.phpt tests/162-mysqli-transaction.phpt tests/170-memcached-span.phpt'
+          # make test points extension_dir at the just-built akari module, which
+          # hides other shared extensions. Load ext-amqp by absolute path.
+          AMQP_SO="$(php -r 'echo ini_get("extension_dir"), "/amqp.so";')"
+          test -f "$AMQP_SO"
+          TEST_PHP_ARGS="-d extension=${AMQP_SO}" \
+            TEST_PHP_EXECUTABLE=$(which php) \
+            make test NO_INTERACTION=1 TESTS='tests/150-redis-span.phpt tests/151-redis-nokey-command.phpt tests/152-redis-unknown-command-skipped.phpt tests/160-mysqli-query-span.phpt tests/161-mysqli-procedural-span.phpt tests/162-mysqli-transaction.phpt tests/170-memcached-span.phpt tests/280-amqp-publish-referenced-headers.phpt'
 
       - name: Show failures
         if: failure()
