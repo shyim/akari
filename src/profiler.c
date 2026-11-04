@@ -166,6 +166,7 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms, double sample_ra
     g_state->log_record_count = 0;
     g_state->log_records_sent = 0;
     g_state->log_overflow_warned = 0;
+    g_state->logs_active = 0;
     g_state->root_exception_escaped = 0;
     g_state->root_exception_message[0] = '\0';
     g_state->service_name_override[0] = '\0';
@@ -197,7 +198,8 @@ void profiler_rinit(uint32_t max_depth, double min_duration_ms, double sample_ra
     /* Trace sampling (OTEL_TRACES_SAMPLER): evaluated once per request, after
      * the root span has parsed the incoming trace context (traceparent header /
      * TRACEPARENT env). An unsampled request leaves the profiler inactive — the
-     * observer skips collection and nothing is buffered or exported. */
+     * observer skips collection and no spans are buffered or exported. */
+    g_state->logs_active = 1;
     if (!akari_sampling_decide(g_state)) {
         g_state->root.active = 0;
         g_state->active = 0;
@@ -264,10 +266,7 @@ void profiler_rshutdown(void)
     free(g_state->msg_attrs);  g_state->msg_attrs = NULL;  g_state->msg_attr_capacity = 0;
     free(g_state->template_attrs); g_state->template_attrs = NULL; g_state->template_attr_capacity = 0;
     free(g_state->exception_events); g_state->exception_events = NULL; g_state->exception_event_capacity = 0;
-    free(g_state->log_records); g_state->log_records = NULL; g_state->log_record_capacity = 0;
-    g_state->log_record_count = 0;
-    g_state->log_records_sent = 0;
-    g_state->log_overflow_warned = 0;
+    profiler_logs_rshutdown();
 
     /* Free #[Akari\Span] attribute lookup cache */
     hook_attribute_cache_free(g_state);
@@ -279,6 +278,16 @@ void profiler_rshutdown(void)
     g_state->service_name_override[0] = '\0';
 
     /* Final flush of remaining spans is done by the caller (php_profiler_otel.c) */
+}
+
+void profiler_logs_rshutdown(void)
+{
+    if (!g_state) return;
+    g_state->logs_active = 0;
+    free(g_state->log_records); g_state->log_records = NULL; g_state->log_record_capacity = 0;
+    g_state->log_record_count = 0;
+    g_state->log_records_sent = 0;
+    g_state->log_overflow_warned = 0;
 }
 
 void profiler_set_flush_callback(profiler_flush_fn fn, void *user_data)
