@@ -151,6 +151,11 @@ ZEND_FUNCTION(Akari_disable)
 {
     ZEND_PARSE_PARAMETERS_NONE();
     profiler_state_t *state = profiler_get_state();
+    if (state && !state->active && state->logs_active) {
+        export_spans(state);
+        profiler_logs_rshutdown();
+        RETURN_TRUE;
+    }
     /* Already disabled — skip duplicate finalize/export */
     if (!state || !state->active) RETURN_TRUE;
     /* Phase 1: Finalize root span before export */
@@ -550,7 +555,7 @@ ZEND_FUNCTION(Akari_log)
     ZEND_PARSE_PARAMETERS_END();
 
     profiler_state_t *state = profiler_get_state();
-    if (!state || !state->active) return;
+    if (!state || !state->logs_active) return;
 
     /* Hard ceiling on buffered records. If a flush could not drain the buffer
      * (e.g. no flush callback, or the UDP send keeps failing), drop further
@@ -810,6 +815,9 @@ PHP_RSHUTDOWN_FUNCTION(akari)
         state->span_count = 0;
         /* Phase 3: Full cleanup (frees attrs, stops sampler, etc.) */
         profiler_rshutdown();
+    } else if (state && state->logs_active) {
+        export_spans(state);
+        profiler_logs_rshutdown();
     }
     /* Free curl restored-header slists now that the request's CurlHandle
      * objects have been destroyed. Deferred to here (not profiler_rshutdown)

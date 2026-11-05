@@ -402,6 +402,9 @@ typedef struct profiler_state_s {
 
     int active;
 
+    /* Akari\log() accepts records; also set when the trace sampler dropped the request. */
+    int logs_active;
+
     /* Head sampling decision, made once in profiler_rinit. When sampled, the
      * request collects full child spans. When NOT sampled ("keep-frame"), child
      * spans are neither created nor kept — only the root span and the per-layer
@@ -454,6 +457,7 @@ void profiler_mshutdown(void);
 void profiler_free_state(void);
 void profiler_rinit(uint32_t max_depth, double min_duration_ms, double sample_rate);
 void profiler_rshutdown(void);
+void profiler_logs_rshutdown(void);
 
 void profiler_set_flush_callback(profiler_flush_fn fn, void *user_data);
 void profiler_set_flush_threshold(size_t threshold);
